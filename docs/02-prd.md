@@ -244,7 +244,93 @@ A prior version of this project was built under the name "POC Creative Studio" w
 
 ---
 
-## 13. Cross-References
+## 13. Local Development Strategy
+
+### Hardware
+- **Machine:** MacBook Pro M2 Pro, 16GB unified memory
+- **GPU:** Apple Silicon (Metal) — no NVIDIA, no CUDA
+- **Constraint:** Cannot run Flux.1 Schnell (~12GB) + LLM (~8-10GB) simultaneously
+
+### Hybrid Approach
+
+The TDD assumes an RTX 3090 (24GB VRAM) running the full stack in Docker. Locally, we split services:
+
+| Component | Local Dev | Vast.ai Production |
+|---|---|---|
+| Ollama (LLM) | **Native macOS** (Metal acceleration), Qwen 3 4B (~3GB) | Docker, Gemma 4 26B MoE (~8-10GB) |
+| Ollama (Vision) | **Native macOS**, LLaVA 7B (~5GB, loaded on demand) | Docker, Gemma 4 26B MoE vision mode |
+| ComfyUI | **Mocked** — Pillow generates placeholder images | Real Flux.1 Schnell FP8 (~12GB) |
+| ChromaDB | Docker container (~200MB) | Docker container |
+| SQLite | Local file | Docker volume |
+| FastAPI | Native Python (uvicorn --reload) | Docker container |
+| React frontend | Vite dev server (port 5173) | Built static, served by FastAPI |
+
+### Why This Split
+- **Ollama native, not Docker:** Docker Desktop on macOS cannot pass Metal GPU to containers. Ollama runs 5-10x faster natively with Metal.
+- **ComfyUI mocked:** Flux.1 Schnell needs ~12GB. With Ollama using ~3-5GB and macOS using ~4GB, there's no room. The mock generates a coloured rectangle with dimension text using Pillow — the compositor, compliance checker, and approval flow all work with mock images.
+- **Smaller LLMs locally:** Gemma 4 26B MoE needs 8-10GB. Qwen 3 4B fits in ~3GB, leaves headroom. Quality is lower but sufficient for testing pipeline flow and conversation logic.
+
+### Memory Budget (Local Dev)
+
+| Component | Memory |
+|---|---|
+| macOS + apps | ~4 GB |
+| Ollama (Qwen 3 4B) | ~3 GB |
+| Ollama (LLaVA 7B, on demand) | ~5 GB |
+| ChromaDB Docker | ~200 MB |
+| FastAPI + Vite | ~300 MB |
+| **Peak total** | ~12.5 GB |
+
+Ollama automatically unloads inactive models, so text and vision models time-share memory.
+
+### Environment Variables (Local Dev)
+
+```
+OLLAMA_BASE_URL=http://localhost:11434
+COMFYUI_BASE_URL=http://localhost:8188
+COMFYUI_MOCK=true
+CHROMA_HOST=localhost
+CHROMA_PORT=8000
+DATABASE_URL=sqlite+aiosqlite:///./data/sofie.db
+LLM_MODEL=qwen3:4b
+VISION_MODEL=llava:7b
+GOOGLE_AI_STUDIO_KEY=
+```
+
+Key additions vs TDD's `.env`: `COMFYUI_MOCK` flag and separate `LLM_MODEL`/`VISION_MODEL` variables allow model swapping without code changes.
+
+### What Works Locally vs Vast.ai Only
+
+| Capability | Local | Vast.ai |
+|---|---|---|
+| Chat with Sofie (conversation, brief extraction) | Yes (smaller model) | Yes (production model) |
+| Brand memory (ChromaDB RAG) | Yes | Yes |
+| Prompt engineering | Yes (lower quality) | Yes |
+| Image generation (Flux.1 Schnell) | **No — mocked** | Yes |
+| Pillow compositing (text/logo overlay) | Yes | Yes |
+| Brand compliance check (vision) | Yes (lower accuracy) | Yes |
+| Approval queue | Yes | Yes |
+| Full E2E with real images | **No** | Yes |
+
+### Docker Compose Files
+
+- `docker-compose.dev.yml` — **Local dev:** ChromaDB only
+- `docker-compose.yml` — **Production (Vast.ai):** Full stack (SOFIE app + Ollama + ComfyUI + ChromaDB)
+
+### Switching to Production
+
+On Vast.ai, change only env vars:
+```
+COMFYUI_MOCK=false
+LLM_MODEL=gemma4:26b-a4b
+VISION_MODEL=gemma4:26b-a4b
+```
+
+Same codebase, same Docker images. Only configuration changes.
+
+---
+
+## 14. Cross-References
 
 - [[01-project-plan]] — Project Plan
 - [[03-tdd]] — Technical Design Document

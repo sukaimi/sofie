@@ -1,0 +1,51 @@
+services:
+  sofie:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - COMFYUI_BASE_URL=http://comfyui:8188
+      - COMFYUI_MOCK=${COMFYUI_MOCK:-false}
+      - FLUX_API_KEY=${FLUX_API_KEY:-}
+      - FLUX_API_PROVIDER=${FLUX_API_PROVIDER:-}
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - DATABASE_URL=sqlite+aiosqlite:///data/sofie.db
+      - LLM_MODEL=${LLM_MODEL:-gemma4:26b-a4b}
+      - VISION_MODEL=${VISION_MODEL:-gemma4:26b-a4b}
+      - GOOGLE_AI_STUDIO_KEY=${GOOGLE_AI_STUDIO_KEY:-}
+    volumes:
+      - ./brands:/app/brands
+      - sofie-output:/app/output
+      - sofie-data:/data
+    depends_on:
+      - ollama
+      - chromadb
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+
+volumes:
+  sofie-data:
+  sofie-output:
+  ollama-models:
+  chroma-data:

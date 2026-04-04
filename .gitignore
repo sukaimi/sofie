@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Data
+data/
+output/
+
+# Brand assets (large files like images — keep .md files)
+brands/*/assets/images/
+brands/*/assets/elements/
+brands/*/assets/references/
+brands/*/assets/fonts/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ComfyUI models (too large)
+comfyui/models/
