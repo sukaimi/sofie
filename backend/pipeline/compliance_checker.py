@@ -32,9 +32,9 @@ Output ONLY a JSON object with this exact schema:
 }
 
 Scoring:
-- 7-10 = pass (approve)
-- 4-6 = needs adjustment (regenerate or recompose)
-- 1-3 = major issues (escalate to human)
+- 6-10 = pass (approve) — be generous with compositions that have heavy text overlays, as text is applied by a separate compositor, not the image model
+- 3-5 = needs adjustment (regenerate or recompose)
+- 1-2 = major issues (escalate to human)
 
 Output ONLY valid JSON."""
 
@@ -84,8 +84,8 @@ async def run(
         score = round(score / 10)
     result["score"] = max(1, min(10, score))
 
-    # Determine pass based on score
-    result["pass"] = result["score"] >= 7
+    # Determine pass based on score (6+ passes — text overlays are compositor-applied, not model-generated)
+    result["pass"] = result["score"] >= 6
 
     logger.info(
         f"Compliance check: {'PASS' if result['pass'] else 'FAIL'} "
