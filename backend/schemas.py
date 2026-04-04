@@ -86,6 +86,20 @@ class BrandCreate(BaseModel):
     assets_path: str | None = None
 
 
+class BrandOnboardSchema(BaseModel):
+    """Brand info extracted from conversational onboarding."""
+
+    name: str
+    tagline: str | None = None
+    summary: str
+    colours: list[dict] = Field(default_factory=list)  # [{"name": "Primary", "hex": "#2C1810"}]
+    typography: str | None = None
+    tone: str | None = None
+    target_audience: str | None = None
+    dos: list[str] = Field(default_factory=list)
+    donts: list[str] = Field(default_factory=list)
+
+
 class BrandResponse(BaseModel):
     id: str
     name: str

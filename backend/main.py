@@ -1,6 +1,8 @@
 import logging
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
+from sqlalchemy import func
 
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,7 @@ from backend.models import (
 )
 from backend.schemas import (
     BrandCreate,
+    BrandOnboardSchema,
     BrandResponse,
     ConversationCreate,
     ConversationResponse,
@@ -31,6 +34,50 @@ from backend.utils import comfyui_client, llm_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+async def _preload_brands() -> None:
+    """Pre-load existing brands into DB and ChromaDB on startup."""
+    from backend.pipeline.brand_memory import ingest_brand
+
+    if not settings.brands_dir.exists():
+        return
+
+    for brand_dir in settings.brands_dir.iterdir():
+        if not brand_dir.is_dir() or not (brand_dir / "brand.md").exists():
+            continue
+
+        brand_id = brand_dir.name
+        async with async_session() as session:
+            existing = await session.get(Brand, brand_id)
+            if not existing:
+                # Read brand name from brand.md first line
+                brand_md = (brand_dir / "brand.md").read_text()
+                name = brand_id.replace("-", " ").title()
+                for line in brand_md.split("\n"):
+                    if line.startswith("## Brand Name"):
+                        idx = brand_md.index(line) + len(line)
+                        next_line = brand_md[idx:].strip().split("\n")[0].strip()
+                        if next_line:
+                            name = next_line
+                        break
+
+                brand = Brand(
+                    id=brand_id,
+                    name=name,
+                    summary_path=str(brand_dir / "brand.md"),
+                    assets_path=str(brand_dir / "assets"),
+                )
+                session.add(brand)
+                await session.commit()
+                logger.info(f"Pre-loaded brand: {name} ({brand_id})")
+
+        # Ingest into ChromaDB
+        try:
+            count = await ingest_brand(brand_id, brand_dir)
+            logger.info(f"Ingested {count} chunks for brand '{brand_id}'")
+        except Exception as e:
+            logger.warning(f"Failed to ingest brand '{brand_id}': {e}")
 
 
 @asynccontextmanager
@@ -47,6 +94,9 @@ async def lifespan(app: FastAPI):
     comfyui_ok = await comfyui_client.check_health()
     mock_label = " (mocked)" if settings.comfyui_mock else ""
     logger.info(f"ComfyUI: {'ready' if comfyui_ok else 'NOT available'}{mock_label}")
+
+    # Pre-load example brand into DB and ChromaDB
+    await _preload_brands()
 
     yield
     # Shutdown
@@ -213,6 +263,122 @@ async def get_brand(brand_id: str):
         if not brand:
             raise HTTPException(404, "Brand not found")
         return _brand_to_response(brand)
+
+
+MAX_BRANDS = 3
+
+
+@app.post("/api/brands/onboard", response_model=BrandResponse)
+async def onboard_brand(body: BrandOnboardSchema):
+    """Create a brand from conversational onboarding data."""
+    from backend.pipeline.brand_memory import ingest_brand
+
+    async with async_session() as session:
+        # Enforce max brands
+        count_result = await session.execute(select(func.count(Brand.id)))
+        count = count_result.scalar()
+        if count >= MAX_BRANDS:
+            raise HTTPException(
+                400,
+                f"Maximum {MAX_BRANDS} brands allowed. Delete one before adding a new brand.",
+            )
+
+    # Generate brand_id from name
+    brand_id = body.name.lower().replace(" ", "-").replace("'", "")
+
+    # Create brand directory and brand.md
+    brand_dir = settings.brands_dir / brand_id
+    brand_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate brand.md content
+    colours_section = "\n".join(
+        f"- **{c.get('name', 'Color')}:** {c.get('hex', '#000000')}"
+        for c in body.colours
+    ) if body.colours else "- Not specified"
+
+    dos_section = "\n".join(f"- {d}" for d in body.dos) if body.dos else "- Not specified"
+    donts_section = "\n".join(f"- {d}" for d in body.donts) if body.donts else "- Not specified"
+
+    brand_md = f"""# {body.name} — Brand Guidelines
+
+## Brand Name
+{body.name}
+
+## Tagline
+{f'"{body.tagline}"' if body.tagline else 'Not specified'}
+
+## Brand Summary
+{body.summary}
+
+## Colour Palette
+{colours_section}
+
+## Typography
+{body.typography or 'Not specified'}
+
+## Tone of Voice
+{body.tone or 'Not specified'}
+
+## Target Audience
+{body.target_audience or 'Not specified'}
+
+## Do's
+{dos_section}
+
+## Don'ts
+{donts_section}
+"""
+
+    brand_md_path = brand_dir / "brand.md"
+    brand_md_path.write_text(brand_md, encoding="utf-8")
+
+    # Create assets directory
+    (brand_dir / "assets" / "images").mkdir(parents=True, exist_ok=True)
+    (brand_dir / "assets" / "fonts").mkdir(parents=True, exist_ok=True)
+    (brand_dir / "assets" / "elements").mkdir(parents=True, exist_ok=True)
+
+    # Ingest into ChromaDB
+    await ingest_brand(brand_id, brand_dir)
+
+    # Create DB record
+    async with async_session() as session:
+        brand = Brand(
+            id=brand_id,
+            name=body.name,
+            summary_path=str(brand_md_path),
+            assets_path=str(brand_dir / "assets"),
+        )
+        session.add(brand)
+        await session.commit()
+        await session.refresh(brand)
+        return _brand_to_response(brand)
+
+
+@app.delete("/api/brands/{brand_id}")
+async def delete_brand(brand_id: str):
+    """Delete a brand and all its data."""
+    from backend.pipeline.brand_memory import _get_client as get_chroma_client
+
+    async with async_session() as session:
+        brand = await session.get(Brand, brand_id)
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        await session.delete(brand)
+        await session.commit()
+
+    # Delete ChromaDB collection
+    try:
+        chroma = get_chroma_client()
+        chroma.delete_collection(name=brand_id)
+    except Exception:
+        pass
+
+    # Delete brand directory
+    brand_dir = settings.brands_dir / brand_id
+    if brand_dir.exists():
+        shutil.rmtree(brand_dir)
+
+    return {"deleted": brand_id}
 
 
 # --- Images ---

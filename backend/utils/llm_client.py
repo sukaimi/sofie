@@ -32,8 +32,17 @@ def _strip_json_fences(text: str) -> str:
 
 
 def _strip_thinking_tags(text: str) -> str:
-    """Strip <think>...</think> tags from model responses (Qwen 3 etc.)."""
-    return re.sub(r"<think>[\s\S]*?</think>\s*", "", text).strip()
+    """Strip <think>...</think> tags from model responses (Qwen 3 etc.).
+
+    Handles: matched pairs, unclosed tags, and partial tags.
+    """
+    # First: strip matched <think>...</think> pairs
+    text = re.sub(r"<think>[\s\S]*?</think>\s*", "", text)
+    # Then: strip unclosed <think> (everything from <think> to end)
+    text = re.sub(r"<think>[\s\S]*$", "", text)
+    # Also strip </think> orphans
+    text = re.sub(r"</think>\s*", "", text)
+    return text.strip()
 
 
 async def chat_completion(

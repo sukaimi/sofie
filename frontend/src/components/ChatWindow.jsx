@@ -4,8 +4,8 @@ import MessageBubble from './MessageBubble'
 import TypingIndicator from './TypingIndicator'
 import ImagePreview from './ImagePreview'
 
-export default function ChatWindow({ conversationId }) {
-  const { messages, sendMessage, isTyping, status, connected } = useWebSocket(conversationId)
+export default function ChatWindow({ conversationId, onBrandCreated }) {
+  const { messages, sendMessage, isTyping, status, connected } = useWebSocket(conversationId, { onBrandCreated })
   const [input, setInput] = useState('')
   const messagesEndRef = useRef(null)
 

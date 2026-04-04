@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-export function useWebSocket(conversationId) {
+export function useWebSocket(conversationId, { onBrandCreated } = {}) {
   const [messages, setMessages] = useState([])
   const [status, setStatus] = useState(null)
   const [isTyping, setIsTyping] = useState(false)
   const [connected, setConnected] = useState(false)
   const wsRef = useRef(null)
+  const onBrandCreatedRef = useRef(onBrandCreated)
+  onBrandCreatedRef.current = onBrandCreated
 
   useEffect(() => {
     if (!conversationId) return
@@ -46,6 +48,11 @@ export function useWebSocket(conversationId) {
           break
         case 'status':
           setStatus(data.message)
+          break
+        case 'brand_created':
+          if (onBrandCreatedRef.current) {
+            onBrandCreatedRef.current(data.brand_id, data.brand_name)
+          }
           break
         case 'error':
           console.error('WebSocket error:', data.message)
