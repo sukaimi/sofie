@@ -36,5 +36,5 @@ Thumbs.db
 *.swp
 *.swo
 
-# ComfyUI models (too large)
-comfyui/models/
+# Temp
+/tmp/

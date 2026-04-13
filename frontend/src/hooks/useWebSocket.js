@@ -1,79 +1,85 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from "react";
 
-export function useWebSocket(conversationId, { onBrandCreated } = {}) {
-  const [messages, setMessages] = useState([])
-  const [status, setStatus] = useState(null)
-  const [isTyping, setIsTyping] = useState(false)
-  const [connected, setConnected] = useState(false)
-  const wsRef = useRef(null)
-  const onBrandCreatedRef = useRef(onBrandCreated)
-  onBrandCreatedRef.current = onBrandCreated
+/**
+ * WebSocket hook for real-time chat with Sofie.
+ *
+ * Handles connection lifecycle, auto-reconnect, and message parsing.
+ * Returns send function and message state so components stay declarative.
+ */
+export default function useWebSocket(conversationId) {
+  const [messages, setMessages] = useState([]);
+  const [status, setStatus] = useState("connecting");
+  const [pipelineStatus, setPipelineStatus] = useState("");
+  const wsRef = useRef(null);
+  const reconnectTimer = useRef(null);
 
-  useEffect(() => {
-    if (!conversationId) return
+  const connect = useCallback(() => {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.host;
+    const ws = new WebSocket(`${protocol}//${host}/ws/${conversationId}`);
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    const ws = new WebSocket(`${protocol}//${host}/ws/chat/${conversationId}`)
-    wsRef.current = ws
-
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => {
-      setConnected(false)
-      setIsTyping(false)
-    }
+    ws.onopen = () => {
+      setStatus("connected");
+    };
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
+      try {
+        const data = JSON.parse(event.data);
 
-      switch (data.type) {
-        case 'message':
-          setMessages((prev) => [...prev, { role: data.role, content: data.content }])
-          setIsTyping(false)
-          break
-        case 'image':
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: 'assistant',
-              content: data.caption,
-              image: { jobId: data.job_id, url: data.image_url },
-            },
-          ])
-          setIsTyping(false)
-          setStatus(null)
-          break
-        case 'typing':
-          setIsTyping(data.active)
-          break
-        case 'status':
-          setStatus(data.message)
-          break
-        case 'brand_created':
-          if (onBrandCreatedRef.current) {
-            onBrandCreatedRef.current(data.brand_id, data.brand_name)
+        if (data.type === "status") {
+          setPipelineStatus(data.content);
+        } else {
+          setMessages((prev) => [...prev, data]);
+          if (data.type !== "status") {
+            setPipelineStatus("");
           }
-          break
-        case 'error':
-          console.error('WebSocket error:', data.message)
-          setStatus(null)
-          setIsTyping(false)
-          break
+        }
+      } catch {
+        // Non-JSON message — treat as plain text from Sofie
+        setMessages((prev) => [
+          ...prev,
+          { type: "message", role: "sofie", content: event.data },
+        ]);
+      }
+    };
+
+    ws.onclose = () => {
+      setStatus("disconnected");
+      // Auto-reconnect after 3 seconds
+      reconnectTimer.current = setTimeout(connect, 3000);
+    };
+
+    ws.onerror = () => {
+      setStatus("error");
+    };
+
+    wsRef.current = ws;
+  }, [conversationId]);
+
+  useEffect(() => {
+    connect();
+    return () => {
+      clearTimeout(reconnectTimer.current);
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [connect]);
+
+  const sendMessage = useCallback((type, content, metadata = {}) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({ type, content, metadata })
+      );
+      // Add user message to local state immediately
+      if (type === "message" || type === "feedback") {
+        setMessages((prev) => [
+          ...prev,
+          { type: "message", role: "user", content },
+        ]);
       }
     }
+  }, []);
 
-    return () => ws.close()
-  }, [conversationId])
-
-  const sendMessage = useCallback(
-    (content) => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        setMessages((prev) => [...prev, { role: 'user', content }])
-        wsRef.current.send(JSON.stringify({ content }))
-      }
-    },
-    []
-  )
-
-  return { messages, sendMessage, isTyping, status, connected }
+  return { messages, status, pipelineStatus, sendMessage };
 }

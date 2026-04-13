@@ -1,331 +1,396 @@
-"""
-WebSocket Chat Handler
-Real-time conversation with Sofie, with pipeline and brand onboarding integration.
-"""
+"""WebSocket handler — real-time chat between brand client and Sofie.
 
-from __future__ import annotations
+Manages conversation state, routes messages through Sofie agent,
+triggers pipeline execution, and relays status updates. Each
+WebSocket connection maps to one conversation.
+"""
 
 import json
-import logging
-import re
+import uuid
+from pathlib import Path
+from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
-from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.chat.memory import get_messages, save_message
-from backend.chat.sofie_persona import build_onboarding_prompt, build_system_prompt
+from backend.agents.sofie import SofieAgent
 from backend.config import settings
-from backend.models import Brand, Conversation, async_session
-from backend.pipeline.brand_memory import query_brand_context
-from backend.pipeline.brief_parser import parse_brief
-from backend.pipeline.orchestrator import run_pipeline
-from backend.schemas import BrandOnboardSchema
-from backend.utils.llm_client import chat_completion
-
-logger = logging.getLogger(__name__)
-
-BRIEF_READY_TAG = "[BRIEF_READY]"
-BRAND_READY_TAG = "[BRAND_READY]"
+from backend.models import Conversation, Job
+from backend.pipeline.orchestrator import PipelineResult, run_pipeline
+from backend.schemas import WebSocketMessage
 
 
-async def _send_json(ws: WebSocket, msg_type: str, **kwargs) -> None:
-    await ws.send_json({"type": msg_type, **kwargs})
+class ConnectionManager:
+    """Track active WebSocket connections for message broadcasting.
+
+    Maps conversation_id → WebSocket so status updates from the
+    pipeline can be pushed to the correct client.
+    """
+
+    def __init__(self) -> None:
+        self._connections: dict[str, WebSocket] = {}
+
+    async def connect(self, conversation_id: str, websocket: WebSocket) -> None:
+        """Accept and register a new WebSocket connection."""
+        await websocket.accept()
+        self._connections[conversation_id] = websocket
+
+    def disconnect(self, conversation_id: str) -> None:
+        """Remove a disconnected client."""
+        self._connections.pop(conversation_id, None)
+
+    async def send_message(
+        self, conversation_id: str, msg: WebSocketMessage
+    ) -> None:
+        """Send a typed message to a specific client."""
+        ws = self._connections.get(conversation_id)
+        if ws:
+            await ws.send_json(msg.model_dump())
+
+    async def send_status(
+        self, conversation_id: str, status: str, job_id: str = ""
+    ) -> None:
+        """Send a pipeline status update to the client."""
+        msg = WebSocketMessage(
+            type="status",
+            role="system",
+            content=status,
+            job_id=job_id,
+        )
+        await self.send_message(conversation_id, msg)
 
 
-async def _get_existing_brand_names() -> list[str]:
-    async with async_session() as session:
-        result = await session.execute(select(Brand.name))
-        return [row[0] for row in result.all()]
+manager = ConnectionManager()
 
 
-async def chat_handler(websocket: WebSocket, conversation_id: str) -> None:
-    """Handle a WebSocket chat session."""
-    await websocket.accept()
+async def handle_websocket(
+    websocket: WebSocket,
+    conversation_id: str,
+    session: AsyncSession,
+) -> None:
+    """Main WebSocket handler — routes all client communication.
 
-    # Load or verify conversation exists
-    async with async_session() as session:
-        conv = await session.get(Conversation, conversation_id)
-        if not conv:
-            await _send_json(websocket, "error", message="Conversation not found")
-            await websocket.close()
-            return
-        brand_id = conv.brand_id
+    Handles greeting, brief upload triggers, chat messages, and
+    feedback. Keeps conversation history in SQLite so reconnections
+    preserve context.
+    """
+    await manager.connect(conversation_id, websocket)
+    sofie = SofieAgent(session)
 
-    # Determine mode: onboarding (no brand) or image generation (has brand)
-    is_onboarding = brand_id is None
+    # Load or create conversation
+    conv = await session.get(Conversation, conversation_id)
+    if not conv:
+        conv = Conversation(id=conversation_id)
+        session.add(conv)
+        await session.flush()
 
-    if is_onboarding:
-        existing_brands = await _get_existing_brand_names()
-        system_prompt = build_onboarding_prompt(existing_brands)
-    else:
-        brand_context = ""
-        brand_context = await query_brand_context(brand_id, "brand overview guidelines")
-        if not brand_context:
-            brand_md_path = settings.brands_dir / brand_id / "brand.md"
-            if brand_md_path.exists():
-                brand_context = brand_md_path.read_text()
-        system_prompt = build_system_prompt(brand_context)
+        # Send greeting
+        greeting = await sofie.execute(
+            _stub_job(), {"action": "greet"}
+        )
+        await _send_sofie_message(conversation_id, greeting["message"])
+        conv.messages.append(
+            {"role": "sofie", "content": greeting["message"]}
+        )
+        await session.flush()
 
     try:
         while True:
-            data = await websocket.receive_json()
-            user_content = data.get("content", "").strip()
-            if not user_content:
-                continue
+            raw = await websocket.receive_text()
+            data = json.loads(raw)
 
-            await save_message(conversation_id, "user", user_content)
-            history = await get_messages(conversation_id)
-            llm_messages = [{"role": "system", "content": system_prompt}] + history
+            msg_type = data.get("type", "message")
+            content = data.get("content", "")
 
-            await _send_json(websocket, "typing", active=True)
-            response = await chat_completion(llm_messages, temperature=0.7)
+            # Record user message
+            conv.messages = conv.messages + [{"role": "user", "content": content}]
+            await session.flush()
 
-            # Handle brand onboarding completion
-            if is_onboarding and BRAND_READY_TAG in response:
-                clean_response, brand_json = _extract_brand_json(response)
-
-                await save_message(conversation_id, "assistant", clean_response)
-                await _send_json(
-                    websocket, "message", role="assistant", content=clean_response
+            if msg_type == "brief_uploaded":
+                await _handle_brief_upload(
+                    conv, data, session, sofie, conversation_id
                 )
-                await _send_json(websocket, "typing", active=False)
-
-                if brand_json:
-                    new_brand_id = await _create_brand_from_chat(
-                        websocket, conversation_id, brand_json
-                    )
-                    if new_brand_id:
-                        # Switch to image generation mode
-                        brand_id = new_brand_id
-                        is_onboarding = False
-                        brand_context = await query_brand_context(
-                            brand_id, "brand overview guidelines"
-                        )
-                        system_prompt = build_system_prompt(brand_context)
-
-                        # Notify frontend
-                        await _send_json(
-                            websocket,
-                            "brand_created",
-                            brand_id=brand_id,
-                            brand_name=brand_json.get("name", ""),
-                        )
-                continue
-
-            # Handle image generation trigger
-            pipeline_triggered = False
-            clean_response = response
-
-            if BRIEF_READY_TAG in response:
-                clean_response = response.replace(BRIEF_READY_TAG, "").strip()
-                pipeline_triggered = True
-
-            await save_message(conversation_id, "assistant", clean_response)
-            await _send_json(
-                websocket, "message", role="assistant", content=clean_response
-            )
-            await _send_json(websocket, "typing", active=False)
-
-            if pipeline_triggered and brand_id:
-                await _run_pipeline_from_chat(
-                    websocket, conversation_id, brand_id, history
+            elif msg_type == "confirmation":
+                await _handle_confirmation(
+                    conv, content, session, sofie, conversation_id
+                )
+            elif msg_type == "feedback":
+                await _handle_feedback(
+                    conv, content, session, sofie, conversation_id
+                )
+            else:
+                await _handle_chat(
+                    conv, content, session, sofie, conversation_id
                 )
 
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected: {conversation_id}")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}", exc_info=True)
-        try:
-            await _send_json(websocket, "error", message=str(e))
-        except Exception:
-            pass
-
-
-def _extract_brand_json(response: str) -> tuple[str, dict | None]:
-    """Extract the [BRAND_READY] tag and JSON from Sofie's response."""
-    # Split on the tag
-    parts = response.split(BRAND_READY_TAG)
-    clean_text = parts[0].strip()
-
-    if len(parts) < 2:
-        return clean_text, None
-
-    json_text = parts[1].strip()
-    # Strip markdown fences
-    json_text = re.sub(r"^```(?:json)?\s*\n?", "", json_text)
-    json_text = re.sub(r"\n?```\s*$", "", json_text)
-
-    try:
-        return clean_text, json.loads(json_text)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse brand JSON: {e}")
-        return clean_text, None
-
-
-async def _create_brand_from_chat(
-    websocket: WebSocket,
-    conversation_id: str,
-    brand_data: dict,
-) -> str | None:
-    """Create a brand from conversational data."""
-    from backend.pipeline.brand_memory import ingest_brand
-
-    try:
-        schema = BrandOnboardSchema(**brand_data)
-    except Exception as e:
-        logger.warning(f"Invalid brand data: {e}")
-        msg = "I had trouble saving that brand info. Could you tell me the brand name and colours again?"
-        await save_message(conversation_id, "assistant", msg)
-        await _send_json(websocket, "message", role="assistant", content=msg)
-        return None
-
-    brand_id = schema.name.lower().replace(" ", "-").replace("'", "")
-
-    await _send_json(websocket, "status", message="Setting up your brand...")
-
-    # Create brand directory and markdown
-    brand_dir = settings.brands_dir / brand_id
-    brand_dir.mkdir(parents=True, exist_ok=True)
-    (brand_dir / "assets" / "images").mkdir(parents=True, exist_ok=True)
-    (brand_dir / "assets" / "fonts").mkdir(parents=True, exist_ok=True)
-    (brand_dir / "assets" / "elements").mkdir(parents=True, exist_ok=True)
-
-    colours_section = "\n".join(
-        f"- **{c.get('name', 'Color')}:** {c.get('hex', '#000000')}"
-        for c in schema.colours
-    ) if schema.colours else "- Not specified"
-
-    dos_section = "\n".join(f"- {d}" for d in schema.dos) if schema.dos else "- Not specified"
-    donts_section = "\n".join(f"- {d}" for d in schema.donts) if schema.donts else "- Not specified"
-
-    brand_md = f"""# {schema.name} — Brand Guidelines
-
-## Brand Name
-{schema.name}
-
-## Tagline
-{f'"{schema.tagline}"' if schema.tagline else 'Not specified'}
-
-## Brand Summary
-{schema.summary}
-
-## Colour Palette
-{colours_section}
-
-## Typography
-{schema.typography or 'Not specified'}
-
-## Tone of Voice
-{schema.tone or 'Not specified'}
-
-## Target Audience
-{schema.target_audience or 'Not specified'}
-
-## Do's
-{dos_section}
-
-## Don'ts
-{donts_section}
-"""
-
-    (brand_dir / "brand.md").write_text(brand_md, encoding="utf-8")
-
-    # Ingest into ChromaDB
-    await ingest_brand(brand_id, brand_dir)
-
-    # Create DB record
-    async with async_session() as session:
-        brand = Brand(
-            id=brand_id,
-            name=schema.name,
-            summary_path=str(brand_dir / "brand.md"),
-            assets_path=str(brand_dir / "assets"),
-        )
-        session.add(brand)
-        await session.commit()
-
-        # Update conversation's brand_id
-        conv = await session.get(Conversation, conversation_id)
-        if conv:
-            conv.brand_id = brand_id
             await session.commit()
 
-    logger.info(f"Brand created via chat: {schema.name} ({brand_id})")
+    except WebSocketDisconnect:
+        manager.disconnect(conversation_id)
+    except Exception as exc:
+        await manager.send_message(
+            conversation_id,
+            WebSocketMessage(
+                type="error",
+                role="system",
+                content=f"An error occurred: {exc}",
+            ),
+        )
+        manager.disconnect(conversation_id)
 
-    confirm_msg = (
-        f"Your brand **{schema.name}** is all set up! "
-        f"I've saved your guidelines and I'm ready to create visuals for you. "
-        f"What would you like to make?"
-    )
-    await save_message(conversation_id, "assistant", confirm_msg)
-    await _send_json(websocket, "message", role="assistant", content=confirm_msg)
 
-    return brand_id
-
-
-async def _run_pipeline_from_chat(
-    websocket: WebSocket,
+async def _handle_brief_upload(
+    conv: Conversation,
+    data: dict[str, Any],
+    session: AsyncSession,
+    sofie: SofieAgent,
     conversation_id: str,
-    brand_id: str,
-    history: list[dict],
 ) -> None:
-    """Extract brief from conversation and run the image generation pipeline."""
-    await _send_json(websocket, "status", message="Understanding your brief...")
-
-    brief_result = await parse_brief(history, brand_id=brand_id)
-
-    if not brief_result.complete or not brief_result.brief:
-        if brief_result.follow_up_question:
-            await save_message(
-                conversation_id, "assistant", brief_result.follow_up_question
-            )
-            await _send_json(
-                websocket,
-                "message",
-                role="assistant",
-                content=brief_result.follow_up_question,
-            )
+    """Process an uploaded brief — parse and present for confirmation."""
+    docx_path = data.get("file_path", "")
+    if not docx_path:
+        await _send_sofie_message(
+            conversation_id,
+            "I didn't receive a file. Could you try uploading again?",
+        )
         return
 
-    async def on_status(msg: str) -> None:
-        await _send_json(websocket, "status", message=msg)
+    await manager.send_status(conversation_id, "parsing_brief")
 
-    try:
-        job = await run_pipeline(
-            brief=brief_result.brief,
-            conversation_id=conversation_id,
-            on_status=on_status,
+    # Create a job for this brief
+    job = Job()
+    session.add(job)
+    await session.flush()
+
+    conv.job_id = job.id
+    conv.state = "validating"
+
+    # Run pipeline up to brief parsing
+    result = await run_pipeline(
+        job=job,
+        session=session,
+        docx_path=Path(docx_path),
+        on_status=lambda s: manager.send_status(conversation_id, s, job.id),
+    )
+
+    # Present extracted fields for confirmation
+    confirm_response = await sofie.execute(
+        job,
+        {
+            "action": "confirm_brief",
+            "brief_fields": job.brief_json,
+            "warnings": [w.get("message", "") for w in result.warnings],
+        },
+    )
+    await _send_sofie_message(
+        conversation_id, confirm_response["message"], job.id
+    )
+    conv.messages = conv.messages + [
+        {"role": "sofie", "content": confirm_response["message"]}
+    ]
+    conv.state = "awaiting_confirmation" if result.status == "awaiting_confirmation" else "validating"
+
+
+async def _handle_confirmation(
+    conv: Conversation,
+    content: str,
+    session: AsyncSession,
+    sofie: SofieAgent,
+    conversation_id: str,
+) -> None:
+    """User confirmed the brief — continue the pipeline."""
+    if not conv.job_id:
+        await _send_sofie_message(
+            conversation_id,
+            "I don't have a brief to work with yet. Could you upload one?",
+        )
+        return
+
+    job = await session.get(Job, conv.job_id)
+    if not job:
+        return
+
+    await _send_sofie_message(
+        conversation_id,
+        "Everything looks good. Starting on your visuals now.",
+        job.id,
+    )
+    conv.messages = conv.messages + [
+        {"role": "sofie", "content": "Everything looks good. Starting on your visuals now."}
+    ]
+
+    # Run the full pipeline
+    result = await run_pipeline(
+        job=job,
+        session=session,
+        on_status=lambda s: manager.send_status(conversation_id, s, job.id),
+    )
+
+    await _handle_pipeline_result(
+        conv, result, job, session, sofie, conversation_id
+    )
+
+
+async def _handle_feedback(
+    conv: Conversation,
+    feedback: str,
+    session: AsyncSession,
+    sofie: SofieAgent,
+    conversation_id: str,
+) -> None:
+    """Process user feedback on presented output."""
+    if not conv.job_id:
+        return
+
+    job = await session.get(Job, conv.job_id)
+    if not job:
+        return
+
+    eval_result = await sofie.execute(
+        job,
+        {
+            "action": "evaluate_feedback",
+            "feedback": feedback,
+            "messages": conv.messages,
+        },
+    )
+
+    feedback_type = eval_result.get("type", "ACTIONABLE")
+
+    if feedback_type == "VAGUE":
+        msg = eval_result.get("message", "Could you be more specific?")
+        await _send_sofie_message(conversation_id, msg, job.id)
+        conv.messages = conv.messages + [{"role": "sofie", "content": msg}]
+    elif feedback_type == "UNACTIONABLE":
+        msg = eval_result.get("message", "Could you use the feedback menu to guide me?")
+        await _send_sofie_message(conversation_id, msg, job.id)
+        conv.messages = conv.messages + [{"role": "sofie", "content": msg}]
+    else:
+        # ACTIONABLE or CONTRADICTORY — proceed with revision
+        await _send_sofie_message(
+            conversation_id,
+            "Got it. Making those changes now.",
+            job.id,
         )
 
-        if job.status == "review":
-            image_url = f"/api/images/{job.id}/final"
-            rationale = (
-                f"Here's your {brief_result.brief.campaign or 'visual'} — "
-                f"I matched the {brief_result.brief.tone or 'requested'} tone "
-                f"with your brand colours."
-            )
-            await save_message(conversation_id, "assistant", rationale)
-            await _send_json(
-                websocket,
-                "image",
+        result = await run_pipeline(
+            job=job,
+            session=session,
+            on_status=lambda s: manager.send_status(conversation_id, s, job.id),
+        )
+
+        await _handle_pipeline_result(
+            conv, result, job, session, sofie, conversation_id
+        )
+
+
+async def _handle_chat(
+    conv: Conversation,
+    content: str,
+    session: AsyncSession,
+    sofie: SofieAgent,
+    conversation_id: str,
+) -> None:
+    """Handle general chat messages."""
+    job = None
+    if conv.job_id:
+        job = await session.get(Job, conv.job_id)
+
+    response = await sofie.execute(
+        job or _stub_job(),
+        {
+            "action": "chat",
+            "user_message": content,
+            "messages": conv.messages,
+        },
+    )
+
+    msg = response.get("message", "")
+    await _send_sofie_message(conversation_id, msg, conv.job_id or "")
+    conv.messages = conv.messages + [{"role": "sofie", "content": msg}]
+
+
+async def _handle_pipeline_result(
+    conv: Conversation,
+    result: PipelineResult,
+    job: Job,
+    session: AsyncSession,
+    sofie: SofieAgent,
+    conversation_id: str,
+) -> None:
+    """Route pipeline results to the appropriate Sofie response."""
+    if result.status == "blocked":
+        resp = await sofie.execute(
+            job, {"action": "report_blockers", "blockers": result.blockers}
+        )
+        await _send_sofie_message(conversation_id, resp["message"], job.id)
+        conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
+
+    elif result.status == "asset_blocked":
+        resp = await sofie.execute(
+            job, {"action": "report_asset_issues", "blockers": result.blockers}
+        )
+        await _send_sofie_message(conversation_id, resp["message"], job.id)
+        conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
+
+    elif result.status == "font_issue":
+        resp = sofie._report_font_issues({"font_issues": result.font_issues})
+        await _send_sofie_message(conversation_id, resp["message"], job.id)
+        conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
+
+    elif result.status == "review":
+        # Present output to user
+        plan = job.composition_plan or {}
+        resp = await sofie.execute(
+            job,
+            {
+                "action": "present_output",
+                "rationale": plan.get("rationale", ""),
+                "size": job.primary_size,
+                "messages": conv.messages,
+            },
+        )
+        msg = resp["message"]
+
+        # Include image paths as metadata
+        await manager.send_message(
+            conversation_id,
+            WebSocketMessage(
+                type="image",
+                role="sofie",
+                content=msg,
                 job_id=job.id,
-                image_url=image_url,
-                caption=rationale,
-            )
-        elif job.status == "failed":
-            fail_msg = (
-                "I had some trouble getting the compliance just right. "
-                "I've sent it to the team for a closer look."
-            )
-            await save_message(conversation_id, "assistant", fail_msg)
-            await _send_json(
-                websocket, "message", role="assistant", content=fail_msg
-            )
-
-    except Exception as e:
-        logger.error(f"Pipeline error in chat: {e}", exc_info=True)
-        error_msg = "I ran into a snag generating that. Could you try describing what you need again?"
-        await save_message(conversation_id, "assistant", error_msg)
-        await _send_json(
-            websocket, "message", role="assistant", content=error_msg
+                metadata={"output_paths": result.output_paths},
+            ),
         )
+        conv.messages = conv.messages + [{"role": "sofie", "content": msg}]
+        conv.state = "awaiting_feedback"
+
+    elif result.status in ("escalated", "cost_ceiling_breached", "failed"):
+        resp = sofie._escalate({"reason": result.error or result.status})
+        await _send_sofie_message(conversation_id, resp["message"], job.id)
+        conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
+
+
+async def _send_sofie_message(
+    conversation_id: str, content: str, job_id: str = ""
+) -> None:
+    """Send a standard Sofie chat message."""
+    await manager.send_message(
+        conversation_id,
+        WebSocketMessage(
+            type="message",
+            role="sofie",
+            content=content,
+            job_id=job_id,
+        ),
+    )
+
+
+def _stub_job() -> Job:
+    """Create a temporary Job for pre-pipeline Sofie calls.
+
+    Before a brief is uploaded, Sofie still needs a Job object to
+    satisfy the BaseAgent interface. This stub is never persisted.
+    """
+    return Job(id="STUB-000000000000")

@@ -1,87 +1,165 @@
-import { useEffect, useRef, useState } from 'react'
-import { useWebSocket } from '../hooks/useWebSocket'
-import MessageBubble from './MessageBubble'
-import TypingIndicator from './TypingIndicator'
-import ImagePreview from './ImagePreview'
+import { useCallback, useEffect, useRef, useState } from "react";
+import FeedbackMenu from "./FeedbackMenu";
+import FileUpload from "./FileUpload";
+import ImagePreview from "./ImagePreview";
+import MessageBubble from "./MessageBubble";
+import TypingIndicator from "./TypingIndicator";
 
-export default function ChatWindow({ conversationId, onBrandCreated }) {
-  const { messages, sendMessage, isTyping, status, connected } = useWebSocket(conversationId, { onBrandCreated })
-  const [input, setInput] = useState('')
-  const messagesEndRef = useRef(null)
+/**
+ * Main chat window — the only brand client interface.
+ *
+ * Composes all chat sub-components and manages the input state.
+ * Scrolls to bottom on new messages. Shows upload zone when
+ * Sofie asks for a brief.
+ */
+export default function ChatWindow({ messages, status, pipelineStatus, sendMessage }) {
+  const [input, setInput] = useState("");
+  const [showUpload, setShowUpload] = useState(true);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const bottomRef = useRef(null);
 
+  // Auto-scroll on new messages
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isTyping, status])
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, pipelineStatus]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    if (!input.trim()) return
-    sendMessage(input.trim())
-    setInput('')
-  }
+  // Detect when to show feedback menu
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (last?.type === "image") {
+      setShowFeedback(true);
+      setShowUpload(false);
+    }
+  }, [messages]);
+
+  const handleSend = useCallback(() => {
+    const text = input.trim();
+    if (!text) return;
+
+    sendMessage("message", text);
+    setInput("");
+  }, [input, sendMessage]);
+
+  const handleKeyDown = useCallback(
+    (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend]
+  );
+
+  const handleFileUploaded = useCallback(
+    (filePath, filename) => {
+      sendMessage("brief_uploaded", filename, { file_path: filePath });
+      setShowUpload(false);
+    },
+    [sendMessage]
+  );
+
+  const handleFeedbackSelect = useCallback(
+    (key, label) => {
+      if (key === "other") {
+        setShowFeedback(false);
+        // Focus text input for free-form feedback
+        return;
+      }
+      sendMessage("feedback", `Change the ${label.toLowerCase()}`);
+      setShowFeedback(false);
+    },
+    [sendMessage]
+  );
+
+  const handleConfirm = useCallback(() => {
+    sendMessage("confirmation", "Yes, that's correct");
+  }, [sendMessage]);
+
+  // Check if the last Sofie message asks for confirmation
+  const lastSofieMsg = [...messages].reverse().find((m) => m.role === "sofie");
+  const awaitingConfirmation = lastSofieMsg?.content?.includes("Is this all correct?");
 
   return (
-    <div className="flex flex-col h-full bg-bg-chat">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-border">
-        <div className="w-10 h-10 rounded-full bg-sofie flex items-center justify-center text-white font-semibold text-sm">
-          S
-        </div>
-        <div>
-          <h2 className="text-sm font-semibold text-text">Sofie</h2>
-          <p className="text-xs text-text-muted">
-            {connected ? 'Online' : 'Connecting...'}
-            {status && ` — ${status}`}
-          </p>
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-        {messages.length === 0 && (
-          <div className="text-center text-text-muted mt-20">
-            <p className="text-lg font-medium">Welcome to SOFIE</p>
-            <p className="text-sm mt-2">Tell Sofie what you need and she'll create it for you.</p>
-          </div>
-        )}
+    <div className="flex flex-col h-full">
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto px-4 py-6">
         {messages.map((msg, i) => (
           <div key={i}>
-            <MessageBubble role={msg.role} content={msg.content} />
-            {msg.image && (
-              <ImagePreview jobId={msg.image.jobId} imageUrl={msg.image.url} />
+            <MessageBubble message={msg} />
+            {msg.type === "image" && msg.metadata?.output_paths && (
+              <ImagePreview paths={msg.metadata.output_paths} jobId={msg.job_id} />
             )}
           </div>
         ))}
-        {isTyping && <TypingIndicator />}
-        {status && !isTyping && (
-          <div className="flex items-center gap-2 text-sm text-text-muted">
-            <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-            {status}
+
+        {pipelineStatus && <TypingIndicator />}
+
+        {showFeedback && <FeedbackMenu onSelect={handleFeedbackSelect} />}
+
+        {awaitingConfirmation && (
+          <div className="flex justify-center my-3">
+            <button
+              onClick={handleConfirm}
+              className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg
+                         hover:bg-indigo-700 transition-colors"
+            >
+              Yes, that's correct
+            </button>
           </div>
         )}
-        <div ref={messagesEndRef} />
+
+        <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="px-6 py-4 border-t border-border">
-        <div className="flex gap-3">
-          <input
-            type="text"
+      {/* Upload zone */}
+      {showUpload && (
+        <div className="px-4 pb-2">
+          <FileUpload onUploaded={handleFileUploaded} />
+        </div>
+      )}
+
+      {/* Input bar */}
+      <div className="border-t border-gray-100 px-4 py-3">
+        <div className="flex gap-2">
+          <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Tell Sofie what you need..."
-            className="flex-1 px-4 py-3 rounded-xl border border-border bg-white text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-            disabled={!connected}
+            onKeyDown={handleKeyDown}
+            placeholder="Type a message..."
+            rows={1}
+            className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-2.5
+                       text-sm focus:outline-none focus:border-indigo-300 focus:ring-1
+                       focus:ring-indigo-200"
           />
           <button
-            type="submit"
-            disabled={!connected || !input.trim()}
-            className="px-6 py-3 rounded-xl bg-accent text-white text-sm font-medium hover:bg-accent-light disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            onClick={handleSend}
+            disabled={!input.trim()}
+            className="px-4 py-2.5 bg-indigo-600 text-white text-sm rounded-xl
+                       hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed
+                       transition-colors"
           >
             Send
           </button>
         </div>
-      </form>
+
+        {/* Connection status */}
+        {status !== "connected" && (
+          <div className="text-xs text-center mt-2 text-amber-500">
+            {status === "connecting"
+              ? "Connecting..."
+              : status === "disconnected"
+              ? "Reconnecting..."
+              : "Connection error"}
+          </div>
+        )}
+
+        {/* Pipeline status */}
+        {pipelineStatus && (
+          <div className="text-xs text-center mt-1 text-gray-400">
+            {pipelineStatus.replace(/_/g, " ")}
+          </div>
+        )}
+      </div>
     </div>
-  )
+  );
 }
