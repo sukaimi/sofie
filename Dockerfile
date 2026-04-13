@@ -1,12 +1,12 @@
 FROM python:3.12-slim
 
-# System dependencies for Cairo + Pango
+# System dependencies for Cairo + Pango + GObject Introspection
 RUN apt-get update && apt-get install -y \
     build-essential \
     libcairo2-dev \
     libpango1.0-dev \
     libpangocairo-1.0-0 \
-    libgirepository1.0-dev \
+    libgirepository-2.0-dev \
     gir1.2-pango-1.0 \
     pkg-config \
     libglib2.0-dev \
