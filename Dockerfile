@@ -2,9 +2,12 @@ FROM python:3.12-slim
 
 # System dependencies for Cairo + Pango
 RUN apt-get update && apt-get install -y \
+    build-essential \
     libcairo2-dev \
     libpango1.0-dev \
     libpangocairo-1.0-0 \
+    libgirepository1.0-dev \
+    gir1.2-pango-1.0 \
     pkg-config \
     libglib2.0-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -12,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY pyproject.toml .
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir .
 
 COPY . .
 
