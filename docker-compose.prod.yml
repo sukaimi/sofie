@@ -1,0 +1,49 @@
+services:
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  backend:
+    build: .
+    env_file: .env
+    ports:
+      - "127.0.0.1:8002:8000"
+    volumes:
+      - ./brands:/app/brands:ro
+      - ./briefs:/app/briefs:ro
+      - output_data:/app/output
+      - sqlite_data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  celery:
+    build: .
+    command: celery -A backend.queue worker --loglevel=info --concurrency=1
+    env_file: .env
+    volumes:
+      - ./brands:/app/brands:ro
+      - output_data:/app/output
+      - sqlite_data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    command: streamlit run dashboard/operator.py --server.port 8501
+    env_file: .env
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - sqlite_data:/app/data
+      - output_data:/app/output
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  output_data:
+  sqlite_data:
