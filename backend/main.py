@@ -34,6 +34,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings.temp_dir.mkdir(parents=True, exist_ok=True)
     Path("data").mkdir(parents=True, exist_ok=True)
 
+    # Purge uploaded briefs older than 3 days
+    import time
+    cutoff = time.time() - (3 * 86400)
+    for f in settings.temp_dir.iterdir():
+        if f.is_file() and f.stat().st_mtime < cutoff:
+            f.unlink()
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
