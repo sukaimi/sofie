@@ -13,13 +13,18 @@ from typing import AsyncGenerator
 from fastapi import Depends, FastAPI, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.config import settings
 from backend.models import Base, Job
 from backend.schemas import HealthResponse, JobStatusResponse
 
-engine = create_async_engine(settings.database_url, echo=settings.debug)
+engine = create_async_engine(
+    settings.database_url,
+    echo=settings.debug,
+    connect_args={"timeout": 30, "check_same_thread": False},
+)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -43,6 +48,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Enable WAL mode for concurrent read/write access
+        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        await conn.execute(text("PRAGMA busy_timeout=5000"))
 
     yield
 

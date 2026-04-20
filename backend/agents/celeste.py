@@ -77,17 +77,22 @@ class CelesteAgent(BaseAgent):
         assets = input_data.get("assets", [])
         dimensions = input_data.get("dimensions", "1080x1080")
 
-        # Collect reference images for vision analysis
+        # Collect reference images for vision analysis — only actual images
         reference_images: list[bytes] = []
         reference_descriptions: list[str] = []
         for asset in assets:
             if asset.get("identified_type") == "reference" and asset.get("local_path"):
+                if asset.get("format") not in ("png", "jpg", "jpeg"):
+                    continue
                 try:
                     with open(asset["local_path"], "rb") as f:
-                        reference_images.append(f.read())
-                    reference_descriptions.append(
-                        f"Reference image: {asset.get('url', 'unknown')}"
-                    )
+                        data = f.read()
+                    # Verify it's actually an image via magic bytes
+                    if data[:8] == b"\x89PNG\r\n\x1a\n" or data[:2] == b"\xff\xd8":
+                        reference_images.append(data)
+                        reference_descriptions.append(
+                            f"Reference image: {asset.get('url', 'unknown')}"
+                        )
                 except OSError:
                     continue
 
