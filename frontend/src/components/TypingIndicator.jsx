@@ -1,38 +1,8 @@
 /**
- * Pipeline progress indicator — shows current step instead of just dots.
+ * Pipeline progress indicator — shows live step detail from the backend.
  */
-
-const STEP_LABELS = {
-  parsing_brief: "Parsing your brief",
-  validating_brief: "Validating brief details",
-  font_check: "Checking font compatibility",
-  validating_assets: "Downloading and checking assets",
-  art_direction: "Planning the composition",
-  generating_hero: "Generating hero image",
-  compositing: "Compositing layers",
-  qa_check: "Running quality checks",
-};
-
-function getLabel(step) {
-  if (!step) return "Working on it";
-
-  // Direct match
-  if (STEP_LABELS[step]) return STEP_LABELS[step];
-
-  // Match partial keys (e.g. "compositing_1080x1080_attempt_1")
-  for (const [key, label] of Object.entries(STEP_LABELS)) {
-    if (step.startsWith(key)) return label;
-  }
-
-  // Match "qa_check_1080x1350" etc
-  if (step.startsWith("qa_check")) return "Running quality checks";
-
-  // Fallback: humanize the raw status
-  return step.replace(/_/g, " ");
-}
-
 export default function TypingIndicator({ step }) {
-  const label = getLabel(step);
+  const label = step || "Working on it";
 
   return (
     <div className="flex justify-start mb-3">

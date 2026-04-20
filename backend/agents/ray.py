@@ -49,6 +49,7 @@ class RayAgent(BaseAgent):
         avoids wasting vision tokens on assets that can't be downloaded.
         """
         asset_links = input_data.get("asset_links", {})
+        on_status = input_data.get("on_status")
         results: list[dict[str, Any]] = []
         has_blockers = False
         missing_required: list[str] = []
@@ -61,6 +62,11 @@ class RayAgent(BaseAgent):
             for url in urls:
                 if not url or not url.strip():
                     continue
+
+                # Send live status with filename from URL
+                if on_status:
+                    filename = url.strip().split("/")[-1].split("?")[0][:40] or asset_type
+                    await on_status(f"Downloading {asset_type}: {filename}")
 
                 result = await fetch_asset(url.strip(), asset_type)
 

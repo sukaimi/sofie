@@ -75,7 +75,7 @@ async def run_pipeline(
         # Step 1: Parse brief (if docx provided)
         if docx_path and not job.brief_json:
             if on_status:
-                await on_status("parsing_brief")
+                await on_status(f"Parsing {docx_path.name}")
             brief_result = await parse_brief(docx_path)
             job.brief_json = brief_result.fields
             job.brand_name = brief_result.fields.get("brand_name", "")
@@ -98,7 +98,7 @@ async def run_pipeline(
 
         # Step 2: Validate brief (Priya)
         if on_status:
-            await on_status("validating_brief")
+            await on_status("Priya is reviewing your brief")
         validation = await priya.run(job, {"brief_fields": brief})
         if validation.get("has_blockers"):
             return PipelineResult(
@@ -109,9 +109,10 @@ async def run_pipeline(
             )
 
         # Step 3: Font check
-        if on_status:
-            await on_status("font_check")
         font_path_str = brief.get("brand_font_link", "")
+        if on_status and font_path_str:
+            font_name = font_path_str.split("/")[-1].split("?")[0] or "brand font"
+            await on_status(f"Checking font: {font_name}")
         texts_to_check = [
             brief.get("headline_text", ""),
             brief.get("sub_copy", ""),
@@ -131,10 +132,12 @@ async def run_pipeline(
                 )
 
         # Step 4: Fetch and validate assets (Ray)
-        if on_status:
-            await on_status("validating_assets")
         asset_links = _extract_asset_links(brief)
-        asset_result = await ray.run(job, {"asset_links": asset_links})
+        # Count total assets for progress
+        total_assets = sum(len(v) if isinstance(v, list) else 1 for v in asset_links.values())
+        if on_status:
+            await on_status(f"Ray is fetching {total_assets} asset{'s' if total_assets != 1 else ''}")
+        asset_result = await ray.run(job, {"asset_links": asset_links, "on_status": on_status})
         if asset_result.get("has_blockers"):
             return PipelineResult(
                 job_id=job.id,
@@ -162,7 +165,7 @@ async def run_pipeline(
 
         # Step 5: Art direction (Celeste)
         if on_status:
-            await on_status("art_direction")
+            await on_status("Celeste is planning the layout")
         plan = await celeste.run(
             job,
             {
@@ -175,7 +178,7 @@ async def run_pipeline(
         # Generate hero image if none provided
         if not asset_paths.get("hero"):
             if on_status:
-                await on_status("generating_hero")
+                await on_status("Generating hero image with Flux")
             w, h = _parse_dimensions(primary_size)
             hero_prompt = _build_hero_prompt(brief, plan)
             hero_path = await generate_image(hero_prompt, (w, h), job.id)
@@ -191,7 +194,8 @@ async def run_pipeline(
 
             for attempt in range(1, settings.max_qa_attempts + 1):
                 if on_status:
-                    await on_status(f"compositing_{size}_attempt_{attempt}")
+                    suffix = f" (attempt {attempt})" if attempt > 1 else ""
+                    await on_status(f"Kai is compositing {size}{suffix}")
 
                 # Step 6: Composite (Kai)
                 composite(plan, asset_paths, output_path, (w, h), settings.jpg_quality)
@@ -211,7 +215,7 @@ async def run_pipeline(
 
                 # Step 7: QA (Dana)
                 if on_status:
-                    await on_status(f"qa_check_{size}")
+                    await on_status(f"Dana is inspecting {size} output")
                 qa_result = await dana.run(
                     job,
                     {
