@@ -62,11 +62,17 @@ class CelesteAgent(BaseAgent):
         '  "rationale": "Plain language explanation"\n'
         "}\n\n"
         "All positions as proportions of canvas (0.0 to 1.0).\n\n"
-        "CRITICAL: text_elements must NEVER be empty. If the brief has a "
-        "headline, sub-copy, or CTA, you MUST include them as text_elements. "
-        "Always include at least the headline. Use the brand colours for text. "
-        "If no brand colours are specified, use white text on dark backgrounds "
-        "or dark text on light backgrounds."
+        "CRITICAL RULES:\n"
+        "1. text_elements must NEVER be empty. If the brief has a "
+        "headline, sub-copy, or CTA, you MUST include them.\n"
+        "2. The logo is ALWAYS placed at bottom-right (x:0.85, y:0.92). "
+        "Do NOT place any text below y:0.85 or to the right of x:0.7 "
+        "in the bottom quarter of the canvas. This zone is reserved for the logo.\n"
+        "3. Stack text elements vertically with clear spacing between them. "
+        "Never overlap text elements with each other.\n"
+        "4. Use white text on dark backgrounds, dark text on light backgrounds.\n"
+        "5. Keep headline in the upper-middle area (y: 0.3-0.5), "
+        "sub-copy below it (y: 0.5-0.65), CTA below that (y: 0.65-0.8)."
     )
 
     async def execute(
@@ -133,20 +139,21 @@ class CelesteAgent(BaseAgent):
         return plan
 
     def _generate_fallback_text(self, brief: dict) -> list[dict]:
-        """Generate text elements from brief fields when Celeste returns none."""
-        elements = []
-        brand_colours = brief.get("brand_colours", "")
+        """Generate text elements from brief fields when Celeste returns none.
 
-        # Pick contrasting text colour
+        Layout: headline in upper-middle, sub-copy below, CTA below that.
+        Bottom-right corner (below y:0.85, right of x:0.7) is reserved for logo.
+        """
+        elements = []
         text_colour = "#FFFFFF"
 
         if brief.get("headline_text"):
             elements.append({
                 "role": "headline",
                 "content": brief["headline_text"],
-                "position": {"x": 0.08, "y": 0.35},
-                "max_width_proportion": 0.84,
-                "font_size_base": 72,
+                "position": {"x": 0.08, "y": 0.40},
+                "max_width_proportion": 0.6,
+                "font_size_base": 64,
                 "font_weight": "bold",
                 "colour": text_colour,
                 "alignment": "left",
@@ -158,9 +165,9 @@ class CelesteAgent(BaseAgent):
             elements.append({
                 "role": "subcopy",
                 "content": content,
-                "position": {"x": 0.08, "y": 0.55},
-                "max_width_proportion": 0.84,
-                "font_size_base": 28,
+                "position": {"x": 0.08, "y": 0.58},
+                "max_width_proportion": 0.6,
+                "font_size_base": 24,
                 "font_weight": "regular",
                 "colour": text_colour,
                 "alignment": "left",
@@ -171,12 +178,12 @@ class CelesteAgent(BaseAgent):
             elements.append({
                 "role": "cta",
                 "content": brief["cta_text"].upper(),
-                "position": {"x": 0.08, "y": 0.75},
-                "max_width_proportion": 0.84,
-                "font_size_base": 36,
+                "position": {"x": 0.08, "y": 0.72},
+                "max_width_proportion": 0.5,
+                "font_size_base": 32,
                 "font_weight": "bold",
                 "colour": text_colour,
-                "alignment": "centre",
+                "alignment": "left",
                 "line_height": 1.2,
             })
 
@@ -307,8 +314,8 @@ class CelesteAgent(BaseAgent):
                 "opacity": 1.0,
             },
             "logo": {
-                "position": {"x": 0.8, "y": 0.9},
-                "size_proportion": 0.15,
+                "position": {"x": 0.85, "y": 0.92},
+                "size_proportion": 0.12,
                 "anchor": "bottom-right",
             },
             "text_elements": [],
