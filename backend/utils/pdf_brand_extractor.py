@@ -46,6 +46,49 @@ def extract_text_from_pdf(pdf_path: str | Path, max_pages: int = 10) -> str:
     return "\n---\n".join(texts)
 
 
+def extract_images_from_pdf(
+    pdf_path: str | Path, min_size: int = 200, max_images: int = 5
+) -> list[dict[str, Any]]:
+    """Extract embedded images from a PDF.
+
+    Returns images larger than min_size pixels on any side.
+    Each result has: bytes, width, height, page number.
+    Used to find logos and hero images inside brand guidelines PDFs.
+    """
+    doc = fitz.open(str(pdf_path))
+    images = []
+
+    for page_num, page in enumerate(doc):
+        for img_info in page.get_images(full=True):
+            xref = img_info[0]
+            try:
+                pix = fitz.Pixmap(doc, xref)
+                # Convert CMYK to RGB
+                if pix.n > 4:
+                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                elif pix.n == 4:
+                    pix = fitz.Pixmap(fitz.csRGB, pix)
+
+                if pix.width >= min_size or pix.height >= min_size:
+                    images.append({
+                        "bytes": pix.tobytes("png"),
+                        "width": pix.width,
+                        "height": pix.height,
+                        "page": page_num,
+                    })
+
+                if len(images) >= max_images:
+                    break
+            except Exception:
+                continue
+
+        if len(images) >= max_images:
+            break
+
+    doc.close()
+    return images
+
+
 BRAND_EXTRACTION_PROMPT = (
     "You are analysing a brand guidelines PDF. Extract the following "
     "information from the pages shown. If a field is not visible, say 'not found'.\n\n"

@@ -9,6 +9,7 @@ import json
 from typing import Any
 
 from backend.agents.base import BaseAgent
+from backend.config import settings
 from backend.models import Job
 from backend.schemas import AssetResult
 from backend.utils.asset_fetcher import fetch_asset
@@ -79,7 +80,7 @@ class RayAgent(BaseAgent):
         results: list[dict[str, Any]] = []
         brand_context: dict[str, Any] = {}
         for result in fetched:
-            # If it's a PDF, treat it as brand guidelines
+            # If it's a PDF, treat it as brand guidelines + extract embedded images
             if result.local_path and result.format in ("unknown", "pdf"):
                 try:
                     with open(result.local_path, "rb") as f:
@@ -94,6 +95,14 @@ class RayAgent(BaseAgent):
                         result.usable = True
                         result.identified_type = "brand_guidelines"
                         result.issues = []
+
+                        # Extract embedded images (logos, etc.)
+                        if on_status:
+                            await on_status("Extracting images from PDF")
+                        pdf_images = await self._extract_and_identify_pdf_images(
+                            job, result.local_path, on_status
+                        )
+                        results.extend(pdf_images)
                 except OSError:
                     pass
             elif result.usable and result.format in ("png", "jpg", "jpeg"):
@@ -167,6 +176,48 @@ class RayAgent(BaseAgent):
                 result.identified_type = identified
         except (json.JSONDecodeError, KeyError):
             pass
+
+    async def _extract_and_identify_pdf_images(
+        self, job: Job, pdf_path: str, on_status: Any = None
+    ) -> list[dict[str, Any]]:
+        """Extract embedded images from a PDF and identify them via vision.
+
+        Saves each extracted image to temp, runs vision identification,
+        and returns them as asset result dicts ready to merge into results.
+        """
+        from backend.utils.pdf_brand_extractor import extract_images_from_pdf
+
+        try:
+            pdf_images = extract_images_from_pdf(pdf_path, min_size=100, max_images=5)
+        except Exception:
+            return []
+
+        extracted_results = []
+        for i, img_data in enumerate(pdf_images):
+            # Save to temp
+            temp_path = settings.temp_dir / f"pdf_extract_{i}_{hash(pdf_path) % 10**8}.png"
+            temp_path.write_bytes(img_data["bytes"])
+
+            # Create a result entry
+            from backend.schemas import AssetResult
+            result = AssetResult(
+                url=f"extracted_from_pdf_page_{img_data['page']}",
+                identified_type="unknown",
+                local_path=str(temp_path),
+                format="png",
+                dimensions=(img_data["width"], img_data["height"]),
+                usable=True,
+                classification="OK",
+            )
+
+            # Vision identify
+            if on_status:
+                await on_status(f"Identifying extracted image {i+1} from PDF")
+            await self._vision_identify(job, result)
+
+            extracted_results.append(result.model_dump())
+
+        return extracted_results
 
     async def _extract_brand_from_pdf(
         self, job: Job, pdf_path: str

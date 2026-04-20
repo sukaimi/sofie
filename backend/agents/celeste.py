@@ -61,7 +61,12 @@ class CelesteAgent(BaseAgent):
         "  ],\n"
         '  "rationale": "Plain language explanation"\n'
         "}\n\n"
-        "All positions as proportions of canvas (0.0 to 1.0)."
+        "All positions as proportions of canvas (0.0 to 1.0).\n\n"
+        "CRITICAL: text_elements must NEVER be empty. If the brief has a "
+        "headline, sub-copy, or CTA, you MUST include them as text_elements. "
+        "Always include at least the headline. Use the brand colours for text. "
+        "If no brand colours are specified, use white text on dark backgrounds "
+        "or dark text on light backgrounds."
     )
 
     async def execute(
