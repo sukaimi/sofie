@@ -72,7 +72,10 @@ class CelesteAgent(BaseAgent):
         "Never overlap text elements with each other.\n"
         "4. Use white text on dark backgrounds, dark text on light backgrounds.\n"
         "5. Keep headline in the upper-middle area (y: 0.3-0.5), "
-        "sub-copy below it (y: 0.5-0.65), CTA below that (y: 0.65-0.8)."
+        "sub-copy below it (y: 0.5-0.65), CTA below that (y: 0.65-0.8).\n"
+        "6. NEVER invent text content. Use ONLY the exact text from the brief "
+        "for headline, sub-copy, and CTA. Do not write taglines, questions, "
+        "or slogans that aren't in the brief."
     )
 
     async def execute(
@@ -123,6 +126,11 @@ class CelesteAgent(BaseAgent):
         # Enforce text elements from brief if Celeste returned none
         if not plan.get("text_elements"):
             plan["text_elements"] = self._generate_fallback_text(brief)
+        else:
+            # Validate Celeste didn't invent text — only allow content from the brief
+            plan["text_elements"] = self._sanitise_text_elements(
+                plan["text_elements"], brief
+            )
 
         # Ensure canvas colour uses brand colours if available
         if plan.get("canvas_colour", "#FFFFFF") == "#FFFFFF" and brief.get("brand_colours"):
@@ -188,6 +196,39 @@ class CelesteAgent(BaseAgent):
             })
 
         return elements
+
+    def _sanitise_text_elements(
+        self, elements: list[dict], brief: dict
+    ) -> list[dict]:
+        """Replace any hallucinated text content with actual brief content.
+
+        Celeste sometimes invents sub-copy or taglines not in the brief.
+        This maps each role to its brief field and overwrites the content.
+        """
+        role_to_field = {
+            "headline": "headline_text",
+            "subcopy": "sub_copy",
+            "cta": "cta_text",
+            "mandatory": "mandatory_inclusions",
+        }
+
+        for elem in elements:
+            role = elem.get("role", "")
+            field = role_to_field.get(role)
+            if field and brief.get(field):
+                elem["content"] = brief[field]
+                if role == "cta":
+                    elem["content"] = elem["content"].upper()
+            elif field and not brief.get(field):
+                # Celeste added a role that has no brief content — use key_message as fallback for subcopy
+                if role == "subcopy" and brief.get("key_message"):
+                    elem["content"] = brief["key_message"][:100]
+                elif not brief.get(field):
+                    # No brief content for this role — remove it
+                    elem["content"] = ""
+
+        # Remove empty elements
+        return [e for e in elements if e.get("content")]
 
     async def revise_plan(
         self, job: Job, qa_issues: list[str], current_plan: dict[str, Any]
