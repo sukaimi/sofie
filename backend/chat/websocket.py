@@ -292,10 +292,37 @@ async def _handle_chat(
     sofie: SofieAgent,
     conversation_id: str,
 ) -> None:
-    """Handle general chat messages."""
+    """Handle general chat messages.
+
+    If the conversation has a resumable job (e.g. after a font issue or
+    blocker was resolved), re-run the pipeline instead of just chatting.
+    """
     job = None
     if conv.job_id:
         job = await session.get(Job, conv.job_id)
+
+    # Resume pipeline if job was paused on a recoverable issue
+    if job and conv.state == "resumable":
+        await _send_sofie_message(
+            conversation_id,
+            "Got it — let me pick up where I left off.",
+            job.id,
+        )
+        conv.messages = conv.messages + [
+            {"role": "sofie", "content": "Got it — let me pick up where I left off."}
+        ]
+        conv.state = "processing"
+
+        result = await run_pipeline(
+            job=job,
+            session=session,
+            on_status=lambda s: manager.send_status(conversation_id, s, job.id),
+        )
+
+        await _handle_pipeline_result(
+            conv, result, job, session, sofie, conversation_id
+        )
+        return
 
     response = await sofie.execute(
         job or _stub_job(),
@@ -326,6 +353,7 @@ async def _handle_pipeline_result(
         )
         await _send_sofie_message(conversation_id, resp["message"], job.id)
         conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
+        conv.state = "resumable"
 
     elif result.status == "asset_blocked":
         resp = await sofie.execute(
@@ -333,11 +361,13 @@ async def _handle_pipeline_result(
         )
         await _send_sofie_message(conversation_id, resp["message"], job.id)
         conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
+        conv.state = "resumable"
 
     elif result.status == "font_issue":
         resp = sofie._report_font_issues({"font_issues": result.font_issues})
         await _send_sofie_message(conversation_id, resp["message"], job.id)
         conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
+        conv.state = "resumable"
 
     elif result.status == "review":
         # Present output to user
