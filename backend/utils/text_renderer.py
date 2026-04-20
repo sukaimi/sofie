@@ -147,7 +147,12 @@ def _render_single_element(
         x = max(margin, width - min_width - margin)
         max_width = min_width
 
-    # Set colour
+    # Draw semi-transparent dark backing behind text for contrast
+    if HAS_PANGO:
+        _draw_text_backing(ctx, content, font_path, font_size, font_weight,
+                           x, y, max_width, alignment, line_height)
+
+    # Set colour and render text
     r, g, b = _hex_to_rgb(colour)
     ctx.set_source_rgb(r, g, b)
 
@@ -160,6 +165,67 @@ def _render_single_element(
         _render_with_cairo_basic(
             ctx, content, font_size, x, y, max_width,
         )
+
+
+def _draw_text_backing(
+    ctx: cairo.Context,
+    content: str,
+    font_path: Path,
+    font_size: int,
+    font_weight: str,
+    x: int,
+    y: int,
+    max_width: int,
+    alignment: str,
+    line_height: float,
+) -> None:
+    """Draw a semi-transparent dark rectangle behind text for contrast.
+
+    Measures the text layout first to get exact dimensions, then draws
+    a rounded-corner backing with padding.
+    """
+    # Measure text size using a temporary layout
+    layout = PangoCairo.create_layout(ctx)
+    font_desc = Pango.FontDescription.new()
+    font_desc.set_family(font_path.stem)
+    font_desc.set_size(font_size * Pango.SCALE)
+    if font_weight == "bold":
+        font_desc.set_weight(Pango.Weight.BOLD)
+    elif font_weight == "medium":
+        font_desc.set_weight(Pango.Weight.MEDIUM)
+    layout.set_font_description(font_desc)
+    layout.set_text(content, -1)
+    layout.set_width(max_width * Pango.SCALE)
+    layout.set_spacing(int((line_height - 1.0) * font_size * Pango.SCALE))
+
+    _, logical_rect = layout.get_pixel_extents()
+    text_w = logical_rect.width
+    text_h = logical_rect.height
+
+    if text_w <= 0 or text_h <= 0:
+        return
+
+    # Padding around text
+    pad_x = int(font_size * 0.4)
+    pad_y = int(font_size * 0.25)
+    radius = int(font_size * 0.2)
+
+    bx = x - pad_x
+    by = y - pad_y
+    bw = text_w + pad_x * 2
+    bh = text_h + pad_y * 2
+
+    # Draw rounded rectangle
+    ctx.save()
+    ctx.set_source_rgba(0, 0, 0, 0.55)
+    ctx.new_path()
+    ctx.arc(bx + radius, by + radius, radius, 3.14159, 1.5 * 3.14159)
+    ctx.arc(bx + bw - radius, by + radius, radius, 1.5 * 3.14159, 0)
+    ctx.arc(bx + bw - radius, by + bh - radius, radius, 0, 0.5 * 3.14159)
+    ctx.arc(bx + radius, by + bh - radius, radius, 0.5 * 3.14159, 3.14159)
+    ctx.close_path()
+    ctx.fill()
+    ctx.restore()
 
 
 def _render_with_pango(
