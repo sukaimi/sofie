@@ -359,9 +359,12 @@ async def run_pipeline(
                     for check_key in ("check1_layout", "check2_brief", "check3_spec"):
                         issues.extend(qa_result.get(check_key, {}).get("issues", []))
                     if on_message:
+                        # Show top 3 issues, shortened
+                        short_issues = [i[:60] for i in issues[:3]]
+                        issues_text = "; ".join(short_issues)
                         await on_message(
-                            f"Dana flagged a few things — Celeste is adjusting "
-                            f"the layout. Attempt {attempt + 1} coming up."
+                            f"Dana flagged: {issues_text}. "
+                            f"Celeste is adjusting — attempt {attempt + 1}."
                         )
                     plan = await celeste.revise_plan(job, issues, plan)
                     await marcus.run(job, {"action": "increment_qa"})
