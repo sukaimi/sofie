@@ -52,7 +52,9 @@ async def generate_image(
 
         return local_path
 
-    except Exception:
+    except Exception as exc:
+        import logging
+        logging.getLogger("sofie.image_gen").error(f"Flux generation failed: {exc}")
         return None
 
 

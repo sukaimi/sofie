@@ -119,14 +119,33 @@ def _render_single_element(
         return
 
     pos = elem.get("position", {})
+    margin = int(0.05 * width)  # 5% margin minimum
+
     x = int(pos.get("x", 0.0) * width)
     y = int(pos.get("y", 0.0) * height)
-    max_width = int(elem.get("max_width_proportion", 0.8) * width)
+    max_width_prop = elem.get("max_width_proportion", 0.8)
+    max_width = int(max_width_prop * width)
     font_size = elem.get("font_size_base", 48)
     colour = elem.get("colour", "#000000")
     alignment = elem.get("alignment", "left")
     line_height = elem.get("line_height", 1.2)
     font_weight = elem.get("font_weight", "regular")
+
+    # Clamp position so text stays within canvas with margins
+    x = max(margin, min(x, width - margin))
+    y = max(margin, min(y, height - margin))
+
+    # Ensure max_width doesn't push text off-canvas
+    available_width = width - x - margin
+    if max_width > available_width:
+        max_width = available_width
+
+    # Ensure max_width is at least 30% of canvas
+    min_width = int(0.3 * width)
+    if max_width < min_width:
+        # Shift x left to make room
+        x = max(margin, width - min_width - margin)
+        max_width = min_width
 
     # Set colour
     r, g, b = _hex_to_rgb(colour)
@@ -274,14 +293,18 @@ def _render_with_pil_fallback(
     draw = ImageDraw.Draw(img)
     width, height = img.size
 
+    margin = int(0.05 * width)
+
     for elem in text_elements:
         content = elem.get("content", "")
         if not content:
             continue
 
         pos = elem.get("position", {})
-        x = int(pos.get("x", 0.0) * width)
-        y = int(pos.get("y", 0.0) * height)
+        x = max(margin, int(pos.get("x", 0.0) * width))
+        y = max(margin, int(pos.get("y", 0.0) * height))
+        x = min(x, width - margin)
+        y = min(y, height - margin)
         font_size = elem.get("font_size_base", 48)
         colour = elem.get("colour", "#000000")
 
