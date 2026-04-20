@@ -14,7 +14,6 @@ import TypingIndicator from "./TypingIndicator";
  */
 export default function ChatWindow({ messages, status, pipelineStatus, sendMessage }) {
   const [input, setInput] = useState("");
-  const [showUpload, setShowUpload] = useState(true);
   const [showFeedback, setShowFeedback] = useState(false);
   const bottomRef = useRef(null);
 
@@ -23,20 +22,11 @@ export default function ChatWindow({ messages, status, pipelineStatus, sendMessa
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, pipelineStatus]);
 
-  // Detect when to show feedback menu or re-show upload
+  // Detect when to show feedback menu
   useEffect(() => {
     const last = messages[messages.length - 1];
     if (last?.type === "image") {
       setShowFeedback(true);
-      setShowUpload(false);
-    } else if (
-      last?.role === "sofie" &&
-      (last.content?.includes("cancelled") ||
-        last.content?.includes("upload a new brief") ||
-        last.content?.includes("start again"))
-    ) {
-      setShowUpload(true);
-      setShowFeedback(false);
     }
   }, [messages]);
 
@@ -61,7 +51,6 @@ export default function ChatWindow({ messages, status, pipelineStatus, sendMessa
   const handleFileUploaded = useCallback(
     (filePath, filename) => {
       sendMessage("brief_uploaded", filename, { file_path: filePath });
-      setShowUpload(false);
     },
     [sendMessage]
   );
@@ -119,12 +108,10 @@ export default function ChatWindow({ messages, status, pipelineStatus, sendMessa
         <div ref={bottomRef} />
       </div>
 
-      {/* Upload zone */}
-      {showUpload && (
-        <div className="px-4 pb-2">
-          <FileUpload onUploaded={handleFileUploaded} />
-        </div>
-      )}
+      {/* Upload zone — always visible so user can upload anytime */}
+      <div className="px-4 pb-2">
+        <FileUpload onUploaded={handleFileUploaded} />
+      </div>
 
       {/* Input bar */}
       <div className="border-t border-gray-100 px-4 py-3">
