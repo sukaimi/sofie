@@ -304,15 +304,30 @@ async def _handle_chat(
     if conv.job_id:
         job = await session.get(Job, conv.job_id)
 
-    # Resume pipeline if job was paused on a recoverable issue
+    # Resume or re-run pipeline
+    should_rerun = False
     if job and conv.state == "resumable":
+        should_rerun = True
+    elif job and conv.state == "awaiting_feedback":
+        # Detect re-run intent from user message
+        lower = content.lower()
+        if any(kw in lower for kw in ("re-run", "rerun", "try again", "redo", "run again")):
+            should_rerun = True
+        # Also check if last Sofie message promised a re-run
+        last_sofie = next(
+            (m for m in reversed(conv.messages) if m.get("role") == "sofie"), {}
+        )
+        if "re-run" in last_sofie.get("content", "").lower():
+            should_rerun = True
+
+    if job and should_rerun:
         await _send_sofie_message(
             conversation_id,
-            "Got it — let me pick up where I left off.",
+            "On it — re-running now.",
             job.id,
         )
         conv.messages = conv.messages + [
-            {"role": "sofie", "content": "Got it — let me pick up where I left off."}
+            {"role": "sofie", "content": "On it — re-running now."}
         ]
         conv.state = "processing"
 
