@@ -31,14 +31,14 @@ AVAILABLE_FONTS: dict[str, dict[str, str]] = {
         "vibe": "warm, professional, semi-rounded",
     },
     "Montserrat": {
-        "path": "/usr/share/fonts/truetype/montserrat/Montserrat-Regular.otf",
+        "path": "/usr/share/fonts/truetype/montserrat/Montserrat-Regular.ttf",
         "style": "sans-serif",
         "vibe": "bold, urban, geometric",
     },
-    "DejaVu Sans": {
-        "path": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "style": "sans-serif",
-        "vibe": "system default, wide coverage",
+    "Noto Serif": {
+        "path": "/usr/share/fonts/truetype/noto/NotoSerif-Regular.ttf",
+        "style": "serif",
+        "vibe": "elegant, classic, editorial",
     },
 }
 
@@ -83,9 +83,10 @@ def recommend_font(brand_name: str, font_name_hint: str = "") -> list[dict[str, 
         if name == "Montserrat":
             score += 1
 
-        # Deprioritise DejaVu (system default)
-        if name == "DejaVu Sans":
-            score -= 3
+        # Boost serif for elegant/classic brands
+        if name == "Noto Serif":
+            if any(kw in hint for kw in ("serif", "elegant", "classic", "luxury")):
+                score += 5
 
         recommendations.append({
             "name": name,

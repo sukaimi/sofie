@@ -437,7 +437,7 @@ def _resolve_font_path(
     if brief_font and Path(brief_font).exists():
         return Path(brief_font)
 
-    return Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    return Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf")
 
 
 def _build_hero_prompt(brief: dict[str, Any], plan: dict[str, Any]) -> str:
