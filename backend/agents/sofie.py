@@ -291,33 +291,37 @@ class SofieAgent(BaseAgent):
         }
 
     def _escalate(self, input_data: dict[str, Any]) -> dict[str, Any]:
-        """Calm escalation message — reassure the user."""
+        """Honest error message — tell the user what happened and how to retry."""
         reason = input_data.get("reason", "")
 
         if "revision_limit" in reason:
             msg = (
-                "I've done my best across two rounds of revisions. "
-                "To make sure you get exactly what you need, "
-                "I'm passing this to the team for a closer look. "
-                "They'll review and come back to you with options."
+                "I've done my best across two rounds of revisions but "
+                "haven't been able to nail it. You can try uploading "
+                "an updated brief with more specific direction, or "
+                "reach out to the team directly for a manual review."
             )
-        elif "qa_failed" in reason:
+        elif "qa_failed" in reason or "QA failed" in reason:
             msg = (
-                "I've made several attempts to get this right but "
-                "my quality check keeps flagging issues. "
-                "I'm sending this to the team for a closer look. "
-                "They'll review and come back to you shortly."
+                "I've made several attempts but my quality check "
+                "keeps finding issues with the output. This usually "
+                "means the brief needs adjustment — try simplifying "
+                "the layout or providing a clearer reference image. "
+                "You can upload an updated brief to try again."
             )
         elif "cost_ceiling" in reason:
             msg = (
-                "I've paused work on your job for a moment — "
-                "this one is taking a bit more processing than usual. "
-                "The team is reviewing and will continue shortly."
+                "This job has hit the processing limit. This can happen "
+                "with complex briefs. You can try uploading a simplified "
+                "version of the brief to try again."
             )
         else:
             msg = (
-                "I'm flagging this to the team for some extra help. "
-                "Someone will be in touch shortly."
+                f"Something went wrong while processing your brief: "
+                f"{reason}\n\n"
+                "You can try uploading the brief again. If the issue "
+                "persists, check that all your asset links are accessible "
+                "and your brief is filled in correctly."
             )
 
         return {"message": msg}

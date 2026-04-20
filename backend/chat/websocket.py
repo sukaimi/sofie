@@ -401,6 +401,7 @@ async def _handle_pipeline_result(
         resp = sofie._escalate({"reason": result.error or result.status})
         await _send_sofie_message(conversation_id, resp["message"], job.id)
         conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
+        conv.state = "resumable"
 
 
 async def _send_sofie_message(
