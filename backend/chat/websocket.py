@@ -172,6 +172,7 @@ async def _handle_brief_upload(
         session=session,
         docx_path=Path(docx_path),
         on_status=lambda s: manager.send_status(conversation_id, s, job.id),
+        on_message=lambda m: _send_sofie_message(conversation_id, m, job.id),
     )
 
     # Present extracted fields for confirmation
@@ -225,6 +226,7 @@ async def _handle_confirmation(
         job=job,
         session=session,
         on_status=lambda s: manager.send_status(conversation_id, s, job.id),
+        on_message=lambda m: _send_sofie_message(conversation_id, m, job.id),
     )
 
     await _handle_pipeline_result(
@@ -278,6 +280,7 @@ async def _handle_feedback(
             job=job,
             session=session,
             on_status=lambda s: manager.send_status(conversation_id, s, job.id),
+            on_message=lambda m: _send_sofie_message(conversation_id, m, job.id),
         )
 
         await _handle_pipeline_result(
@@ -317,6 +320,7 @@ async def _handle_chat(
             job=job,
             session=session,
             on_status=lambda s: manager.send_status(conversation_id, s, job.id),
+            on_message=lambda m: _send_sofie_message(conversation_id, m, job.id),
         )
 
         await _handle_pipeline_result(

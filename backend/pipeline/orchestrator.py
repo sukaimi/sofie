@@ -58,6 +58,7 @@ async def run_pipeline(
     session: AsyncSession,
     docx_path: Path | None = None,
     on_status: Callable[[str], Any] | None = None,
+    on_message: Callable[[str], Any] | None = None,
 ) -> PipelineResult:
     """Execute the full production pipeline for a single job.
 
@@ -94,9 +95,16 @@ async def run_pipeline(
             )
 
         brief = job.brief_json
+        brand = brief.get("brand_name", "your brand")
         await marcus.run(job, {"action": "update_status", "new_status": "validating"})
 
         # Steps 2-4 run in PARALLEL: Priya + Ray + font check
+        if on_message:
+            await on_message(
+                f"Great — I've got the team working on {brand} now. "
+                "Priya's reviewing the brief while Ray grabs your assets. "
+                "This usually takes a minute or two."
+            )
         if on_status:
             await on_status("Running validation, asset fetch, and font check in parallel")
 
@@ -176,6 +184,11 @@ async def run_pipeline(
         await marcus.run(job, {"action": "update_status", "new_status": "compositing"})
 
         # Step 5: Art direction (Celeste)
+        if on_message:
+            await on_message(
+                "All assets checked out. Celeste is working on the art direction "
+                "now — she'll figure out the best layout for your content."
+            )
         if on_status:
             await on_status("Celeste is planning the layout")
         plan = await celeste.run(
@@ -189,6 +202,11 @@ async def run_pipeline(
 
         # Generate hero image if none provided
         if not asset_paths.get("hero"):
+            if on_message:
+                await on_message(
+                    "No hero image in your brief, so I'm generating one. "
+                    "This takes a little longer — hang tight."
+                )
             if on_status:
                 await on_status("Generating hero image with Flux")
             w, h = _parse_dimensions(primary_size)
@@ -199,6 +217,11 @@ async def run_pipeline(
 
         # QA loop (max 3 attempts per CLAUDE.md)
         output_paths: dict[str, str] = {}
+        if on_message:
+            await on_message(
+                "Layout's locked in. Kai is putting the pieces together now "
+                "and Dana will run quality checks once it's composited."
+            )
 
         for size in sizes:
             w, h = _parse_dimensions(size)
@@ -256,6 +279,11 @@ async def run_pipeline(
                     issues = []
                     for check_key in ("check1_layout", "check2_brief", "check3_spec"):
                         issues.extend(qa_result.get(check_key, {}).get("issues", []))
+                    if on_message:
+                        await on_message(
+                            f"Dana flagged a few things — Celeste is adjusting "
+                            f"the layout. Attempt {attempt + 1} coming up."
+                        )
                     plan = await celeste.revise_plan(job, issues, plan)
                     await marcus.run(job, {"action": "increment_qa"})
 
