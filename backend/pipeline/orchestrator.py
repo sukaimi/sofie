@@ -174,6 +174,51 @@ async def run_pipeline(
         job.asset_manifest = asset_result
         await session.flush()
 
+        # Enrich brief with extracted brand context from PDF guidelines
+        brand_context = asset_result.get("brand_context", {})
+        if brand_context:
+            if on_message:
+                extracted = []
+                if brand_context.get("brand_colours"):
+                    extracted.append(f"Colours: {', '.join(brand_context['brand_colours'][:5])}")
+                if brand_context.get("primary_font"):
+                    extracted.append(f"Font: {brand_context['primary_font']}")
+                if brand_context.get("logo_description"):
+                    extracted.append(f"Logo: {brand_context['logo_description'][:80]}")
+                if brand_context.get("brand_tone"):
+                    extracted.append(f"Tone: {brand_context['brand_tone']}")
+                if extracted:
+                    await on_message(
+                        "I found your brand guidelines PDF and extracted:\n"
+                        + "\n".join(f"- {e}" for e in extracted)
+                    )
+
+            # Merge extracted info into brief (don't overwrite existing values)
+            if brand_context.get("brand_colours") and not brief.get("brand_colours"):
+                brief["brand_colours"] = ", ".join(brand_context["brand_colours"])
+            if brand_context.get("brand_tone") and not brief.get("brand_tone"):
+                brief["brand_tone"] = brand_context["brand_tone"]
+            if brand_context.get("logo_description"):
+                brief["logo_description"] = brand_context["logo_description"]
+            if brand_context.get("do_nots"):
+                existing = brief.get("restrictions_dont", "")
+                new_donts = "; ".join(brand_context["do_nots"])
+                brief["restrictions_dont"] = f"{existing}; {new_donts}" if existing else new_donts
+
+            job.brief_json = brief
+            await session.flush()
+
+            # Try to match extracted font name to installed fonts
+            if brand_context.get("primary_font"):
+                from backend.utils.font_recommender import get_font_path
+                matched = get_font_path(brand_context["primary_font"])
+                if matched:
+                    if on_message:
+                        await on_message(
+                            f"The brand guidelines specify **{brand_context['primary_font']}** "
+                            f"— I have that installed, so I'll use it."
+                        )
+
         # Build asset path lookup for compositor
         asset_paths = _build_asset_paths(asset_result.get("assets", []))
 

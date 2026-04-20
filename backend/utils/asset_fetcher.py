@@ -177,6 +177,8 @@ def _identify_format(path: Path, content: bytes) -> str:
         return "jpg"
     if content[:4] == b"<svg" or b"<svg" in content[:200]:
         return "svg"
+    if content[:5] == b"%PDF-":
+        return "pdf"
     if content[:4] in (b"\x00\x01\x00\x00", b"OTTO"):
         return "otf"
     if content[:4] == b"\x00\x01\x00\x00":

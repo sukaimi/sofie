@@ -75,10 +75,28 @@ class RayAgent(BaseAgent):
             *[_fetch_one(url, at) for url, at in fetch_tasks]
         )
 
-        # Pass 2: vision identification (sequential — LLM-bound)
+        # Pass 2: vision identification + PDF brand extraction
         results: list[dict[str, Any]] = []
+        brand_context: dict[str, Any] = {}
         for result in fetched:
-            if result.usable and result.format in ("png", "jpg", "jpeg"):
+            # If it's a PDF, treat it as brand guidelines
+            if result.local_path and result.format in ("unknown", "pdf"):
+                try:
+                    with open(result.local_path, "rb") as f:
+                        header = f.read(5)
+                    if header == b"%PDF-":
+                        if on_status:
+                            await on_status("Reading brand guidelines PDF")
+                        brand_context = await self._extract_brand_from_pdf(
+                            job, result.local_path
+                        )
+                        result.classification = "OK"
+                        result.usable = True
+                        result.identified_type = "brand_guidelines"
+                        result.issues = []
+                except OSError:
+                    pass
+            elif result.usable and result.format in ("png", "jpg", "jpeg"):
                 if on_status:
                     filename = (result.local_path or "").split("/")[-1] or "image"
                     await on_status(f"Identifying asset: {filename}")
@@ -100,6 +118,7 @@ class RayAgent(BaseAgent):
             "has_blockers": has_blockers,
             "missing_required": missing_required,
             "summary": self._build_summary(results, missing_required),
+            "brand_context": brand_context,
         }
 
     async def _vision_identify(
@@ -148,6 +167,50 @@ class RayAgent(BaseAgent):
                 result.identified_type = identified
         except (json.JSONDecodeError, KeyError):
             pass
+
+    async def _extract_brand_from_pdf(
+        self, job: Job, pdf_path: str
+    ) -> dict[str, Any]:
+        """Read a brand guidelines PDF and extract brand elements via vision.
+
+        Sends up to 6 pages as images to Claude vision with a structured
+        extraction prompt. Returns brand context dict.
+        """
+        from backend.utils.pdf_brand_extractor import (
+            BRAND_EXTRACTION_PROMPT,
+            pdf_to_page_images,
+        )
+
+        try:
+            page_images = pdf_to_page_images(pdf_path, max_pages=6)
+        except Exception:
+            return {}
+
+        if not page_images:
+            return {}
+
+        messages = [{"role": "user", "content": BRAND_EXTRACTION_PROMPT}]
+
+        response = await self._call_llm(
+            job=job,
+            messages=messages,
+            step="brand_pdf_extraction",
+            max_tokens=1024,
+            images=page_images,
+        )
+
+        try:
+            text = response.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start >= 0 and end > start:
+                return json.loads(text[start:end])
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+        return {}
 
     def _build_summary(
         self,

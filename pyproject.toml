@@ -22,6 +22,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "pymupdf>=1.24",
 ]
 
 [build-system]
