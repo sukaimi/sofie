@@ -147,7 +147,8 @@ async def _handle_brief_upload(
     conversation_id: str,
 ) -> None:
     """Process an uploaded brief — parse and present for confirmation."""
-    docx_path = data.get("file_path", "")
+    metadata = data.get("metadata", {})
+    docx_path = metadata.get("file_path", "") or data.get("file_path", "")
     if not docx_path:
         await _send_sofie_message(
             conversation_id,
