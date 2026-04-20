@@ -89,7 +89,7 @@ export default function ChatWindow({ messages, status, pipelineStatus, sendMessa
           </div>
         ))}
 
-        {pipelineStatus && <TypingIndicator />}
+        {pipelineStatus && <TypingIndicator step={pipelineStatus} />}
 
         {showFeedback && <FeedbackMenu onSelect={handleFeedbackSelect} />}
 
@@ -148,12 +148,6 @@ export default function ChatWindow({ messages, status, pipelineStatus, sendMessa
           </div>
         )}
 
-        {/* Pipeline status */}
-        {pipelineStatus && (
-          <div className="text-xs text-center mt-1 text-gray-400">
-            {pipelineStatus.replace(/_/g, " ")}
-          </div>
-        )}
       </div>
     </div>
   );

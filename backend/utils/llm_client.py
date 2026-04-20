@@ -122,12 +122,23 @@ def _inject_images(
     image_blocks = []
     for img_bytes in images:
         b64 = base64.b64encode(img_bytes).decode("utf-8")
+        # Detect MIME type from magic bytes
+        if img_bytes[:2] == b"\xff\xd8":
+            media_type = "image/jpeg"
+        elif img_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+            media_type = "image/png"
+        elif img_bytes[:4] == b"GIF8":
+            media_type = "image/gif"
+        elif img_bytes[:4] == b"RIFF" and img_bytes[8:12] == b"WEBP":
+            media_type = "image/webp"
+        else:
+            media_type = "image/png"
         image_blocks.append(
             {
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": "image/png",
+                    "media_type": media_type,
                     "data": b64,
                 },
             }
