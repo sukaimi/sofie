@@ -38,7 +38,7 @@ class MarcusAgent(BaseAgent):
         "pending": {"validating"},
         "validating": {"compositing", "failed", "escalated"},
         "compositing": {"qa", "failed", "escalated"},
-        "qa": {"review", "compositing", "failed", "escalated"},
+        "qa": {"qa", "review", "compositing", "failed", "escalated"},
         "review": {"operator_review", "compositing", "failed", "escalated"},
         "operator_review": {"approved", "compositing", "escalated"},
         "approved": {"delivered"},
