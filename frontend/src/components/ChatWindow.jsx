@@ -23,12 +23,20 @@ export default function ChatWindow({ messages, status, pipelineStatus, sendMessa
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, pipelineStatus]);
 
-  // Detect when to show feedback menu
+  // Detect when to show feedback menu or re-show upload
   useEffect(() => {
     const last = messages[messages.length - 1];
     if (last?.type === "image") {
       setShowFeedback(true);
       setShowUpload(false);
+    } else if (
+      last?.role === "sofie" &&
+      (last.content?.includes("cancelled") ||
+        last.content?.includes("upload a new brief") ||
+        last.content?.includes("start again"))
+    ) {
+      setShowUpload(true);
+      setShowFeedback(false);
     }
   }, [messages]);
 
