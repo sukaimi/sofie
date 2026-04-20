@@ -98,8 +98,12 @@ async def fetch_asset(url: str, expected_type: str) -> AssetResult:
             )
             return result
 
-        # Save to temp directory
-        local_path = _save_to_temp(url, resp.content)
+        # Save to temp directory — use Content-Disposition filename if available
+        cd_filename = ""
+        cd = resp.headers.get("content-disposition", "")
+        if "filename=" in cd:
+            cd_filename = cd.split("filename=")[-1].strip('"').strip("'")
+        local_path = _save_to_temp(url, resp.content, cd_filename)
         result.local_path = str(local_path)
 
         # Identify format from content, not filename (per Ray's spec)
@@ -137,21 +141,25 @@ def _apply_platform_error(url: str, status_code: int, result: AssetResult) -> No
     )
 
 
-def _save_to_temp(url: str, content: bytes) -> Path:
+def _save_to_temp(url: str, content: bytes, cd_filename: str = "") -> Path:
     """Write downloaded bytes to a temp file.
 
-    Filename is derived from the URL path to keep things debuggable,
-    but collisions don't matter since each job gets its own temp dir.
+    Uses Content-Disposition filename if available (e.g. from Google Drive),
+    falls back to URL path, then hash.
     """
     temp_dir = settings.temp_dir
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract filename from URL, fallback to hash if no path
-    url_path = url.split("?")[0].split("/")[-1]
-    if not url_path or len(url_path) > 100:
-        url_path = f"asset_{hash(url) % 10**8}"
+    if cd_filename and len(cd_filename) <= 100:
+        filename = cd_filename
+    else:
+        url_path = url.split("?")[0].split("/")[-1]
+        if not url_path or len(url_path) > 100 or url_path in ("uc", "download"):
+            filename = f"asset_{hash(url) % 10**8}"
+        else:
+            filename = url_path
 
-    local_path = temp_dir / url_path
+    local_path = temp_dir / filename
     local_path.write_bytes(content)
     return local_path
 

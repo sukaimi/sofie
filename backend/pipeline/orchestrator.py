@@ -175,6 +175,26 @@ async def run_pipeline(
         # Build asset path lookup for compositor
         asset_paths = _build_asset_paths(asset_result.get("assets", []))
 
+        # Report any asset warnings to the user (especially font fallback)
+        if on_message:
+            asset_warnings = []
+            for asset in asset_result.get("assets", []):
+                if asset.get("classification") == "WARNING" and asset.get("issues"):
+                    asset_type = asset.get("identified_type", "asset")
+                    issues = "; ".join(asset["issues"])
+                    asset_warnings.append(f"**{asset_type}:** {issues}")
+
+            if asset_warnings:
+                warnings_text = "\n".join(f"- {w}" for w in asset_warnings)
+                await on_message(
+                    f"Heads up — a few asset notes:\n{warnings_text}\n\n"
+                    "I'll continue with fallbacks where needed."
+                )
+            else:
+                await on_message(
+                    "All assets checked out. Moving on to art direction."
+                )
+
         # Determine primary size
         sizes = job.output_sizes or ["1080x1080"]
         primary_size = sizes[0]
@@ -186,7 +206,7 @@ async def run_pipeline(
         # Step 5: Art direction (Celeste)
         if on_message:
             await on_message(
-                "All assets checked out. Celeste is working on the art direction "
+                "Celeste is working on the art direction "
                 "now — she'll figure out the best layout for your content."
             )
         if on_status:
