@@ -26,22 +26,26 @@ class DanaAgent(BaseAgent):
         "You are Dana, a QA inspector at a creative studio.\n\n"
         "You receive a composited image and the original brief + plan.\n"
         "Run 3 checks and report pass/fail with specific issues.\n\n"
-        "CHECK 1 — LAYOUT QUALITY (pass threshold: 70)\n"
-        "- Visual hierarchy correct?\n"
-        "- Elements properly spaced?\n"
-        "- Negative space used well?\n"
-        "- Any elements clipped at edges?\n\n"
-        "CHECK 2 — BRIEF COMPLIANCE (pass threshold: 75)\n"
-        "- Correct headline present and readable?\n"
-        "- CTA present if specified?\n"
-        "- Mood/tone matches brief?\n"
-        "- Layout reference honoured?\n"
-        "- No restricted elements present?\n\n"
-        "CHECK 3 — TECHNICAL SPECIFICATION (pass threshold: 80)\n"
-        "- Dimensions correct?\n"
-        "- Text legible at display size?\n"
-        "- Logo at correct proportional size?\n"
-        "- Brand colours dominant?\n\n"
+        "IMPORTANT CONTEXT: This is a POC system using programmatic compositing\n"
+        "(Pillow + Cairo), not professional design software. Be pragmatic —\n"
+        "pass the image if it is good enough to show the client for feedback.\n"
+        "The client will request revisions anyway. Don't block on minor issues.\n"
+        "Only fail if something is genuinely broken or misleading.\n\n"
+        "CHECK 1 — LAYOUT QUALITY (pass threshold: 50)\n"
+        "- Are elements visible and not clipped off-canvas?\n"
+        "- Is there a reasonable visual hierarchy?\n"
+        "- Is spacing acceptable (not perfect, just not broken)?\n\n"
+        "CHECK 2 — BRIEF COMPLIANCE (pass threshold: 50)\n"
+        "- Is the headline present?\n"
+        "- Is the CTA present if specified?\n"
+        "- Does the general mood feel right?\n"
+        "- Are there any restricted elements present?\n\n"
+        "CHECK 3 — TECHNICAL SPECIFICATION (pass threshold: 60)\n"
+        "- Are dimensions roughly correct?\n"
+        "- Is text readable (not perfect, just readable)?\n"
+        "- Is the logo present?\n\n"
+        "OVERALL PASS: pass if at least 2 of 3 checks pass.\n"
+        "When in doubt, PASS and let the client give feedback.\n\n"
         "Output ONLY valid JSON:\n"
         "{\n"
         '  "check1_layout": {"pass": true/false, "score": 0-100, "issues": []},\n'
@@ -51,8 +55,8 @@ class DanaAgent(BaseAgent):
         '  "recommendation": "send_to_user|revise_composition|revise_layout|escalate",\n'
         '  "revision_notes": "Specific instructions for revision if needed"\n'
         "}\n\n"
-        "Be specific about issues. 'Logo too small' is not enough.\n"
-        "'Logo is approximately 8% of canvas width — should be 15% per brand guide' is correct."
+        "Be specific about issues but be lenient. Log issues as notes,\n"
+        "not as reasons to fail. Only fail on genuinely broken output."
     )
 
     async def execute(
@@ -165,9 +169,12 @@ class DanaAgent(BaseAgent):
             check.setdefault("score", 0)
             check.setdefault("issues", [])
 
-        result.setdefault("overall_pass", all(
-            result[k]["pass"] for k in ("check1_layout", "check2_brief", "check3_spec")
-        ))
+        # 2 of 3 checks must pass (not all 3)
+        passes = sum(
+            1 for k in ("check1_layout", "check2_brief", "check3_spec")
+            if result[k]["pass"]
+        )
+        result.setdefault("overall_pass", passes >= 2)
         result.setdefault("recommendation", "send_to_user" if result["overall_pass"] else "revise_composition")
         result.setdefault("revision_notes", "")
 
