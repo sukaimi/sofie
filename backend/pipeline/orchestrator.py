@@ -84,6 +84,8 @@ async def run_pipeline(
             sizes = brief_result.fields.get("output_sizes", [])
             if isinstance(sizes, str):
                 sizes = [s.strip() for s in sizes.split(",")]
+            # Normalize: "1080 x 1350" → "1080x1350"
+            sizes = [s.replace(" ", "") for s in sizes]
             job.output_sizes = sizes
             await session.flush()
 

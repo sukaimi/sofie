@@ -22,11 +22,15 @@ export default function ChatWindow({ messages, status, pipelineStatus, sendMessa
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, pipelineStatus]);
 
-  // Detect when to show feedback menu
+  // Show feedback menu only when last message is an image (no suggestions after)
   useEffect(() => {
     const last = messages[messages.length - 1];
     if (last?.type === "image") {
       setShowFeedback(true);
+    } else if (last?.role === "sofie" && last?.type === "message") {
+      // If Sofie sent a follow-up message after the image (e.g. suggestions),
+      // hide the feedback menu — Sofie is driving the conversation
+      setShowFeedback(false);
     }
   }, [messages]);
 
