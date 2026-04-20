@@ -74,11 +74,9 @@ class RayAgent(BaseAgent):
                     has_blockers = True
 
         # Check for required assets that weren't provided at all
+        # Font is optional — pipeline falls back to DejaVuSans
         if "logo" not in asset_links and "logo_link" not in asset_links:
             missing_required.append("logo")
-            has_blockers = True
-        if "font" not in asset_links and "brand_font_link" not in asset_links:
-            missing_required.append("font")
             has_blockers = True
 
         return {

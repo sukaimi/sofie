@@ -47,6 +47,9 @@ async def fetch_asset(url: str, expected_type: str) -> AssetResult:
     """
     result = AssetResult(url=url, identified_type=expected_type)
 
+    # Convert Google Drive sharing links to direct download URLs
+    url = _convert_gdrive_url(url)
+
     async with httpx.AsyncClient(
         follow_redirects=True, timeout=httpx.Timeout(_TIMEOUT_S)
     ) as client:
@@ -250,12 +253,33 @@ def _validate_font(path: Path, result: AssetResult) -> None:
     """Check that a font file can be loaded.
 
     Cairo font loading is tested at composition time — here we just
-    check the file is a recognised font format.
+    check the file is a recognised font format. Non-font files get
+    a WARNING (not BLOCKER) so the pipeline can fall back to DejaVuSans.
     """
     if result.format in ("otf", "ttf"):
         result.usable = True
         result.classification = "OK"
     else:
         result.issues.append(f"Expected font file (OTF/TTF), got {result.format}")
-        result.classification = "BLOCKER"
-        result.advice = "Please provide OTF or TTF font file"
+        result.classification = "WARNING"
+        result.usable = False
+        result.advice = (
+            "Could not use this as a font file. "
+            "Will use a fallback system font instead"
+        )
+
+
+def _convert_gdrive_url(url: str) -> str:
+    """Convert Google Drive sharing URLs to direct download links.
+
+    /file/d/FILE_ID/view?... → /uc?export=download&id=FILE_ID
+    """
+    import re
+
+    match = re.match(
+        r"https?://drive\.google\.com/file/d/([a-zA-Z0-9_-]+)", url
+    )
+    if match:
+        file_id = match.group(1)
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url
