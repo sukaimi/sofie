@@ -113,10 +113,74 @@ class CelesteAgent(BaseAgent):
         )
 
         plan = self._parse_plan(response)
+
+        # Enforce text elements from brief if Celeste returned none
+        if not plan.get("text_elements"):
+            plan["text_elements"] = self._generate_fallback_text(brief)
+
+        # Ensure canvas colour uses brand colours if available
+        if plan.get("canvas_colour", "#FFFFFF") == "#FFFFFF" and brief.get("brand_colours"):
+            colours = brief["brand_colours"]
+            if isinstance(colours, str):
+                import re
+                match = re.search(r"#[0-9A-Fa-f]{6}", colours)
+                if match:
+                    plan["canvas_colour"] = match.group()
+
         job.composition_plan = plan
         await self._session.flush()
 
         return plan
+
+    def _generate_fallback_text(self, brief: dict) -> list[dict]:
+        """Generate text elements from brief fields when Celeste returns none."""
+        elements = []
+        brand_colours = brief.get("brand_colours", "")
+
+        # Pick contrasting text colour
+        text_colour = "#FFFFFF"
+
+        if brief.get("headline_text"):
+            elements.append({
+                "role": "headline",
+                "content": brief["headline_text"],
+                "position": {"x": 0.08, "y": 0.35},
+                "max_width_proportion": 0.84,
+                "font_size_base": 72,
+                "font_weight": "bold",
+                "colour": text_colour,
+                "alignment": "left",
+                "line_height": 1.1,
+            })
+
+        if brief.get("sub_copy") or brief.get("key_message"):
+            content = brief.get("sub_copy") or brief.get("key_message", "")[:80]
+            elements.append({
+                "role": "subcopy",
+                "content": content,
+                "position": {"x": 0.08, "y": 0.55},
+                "max_width_proportion": 0.84,
+                "font_size_base": 28,
+                "font_weight": "regular",
+                "colour": text_colour,
+                "alignment": "left",
+                "line_height": 1.3,
+            })
+
+        if brief.get("cta_text"):
+            elements.append({
+                "role": "cta",
+                "content": brief["cta_text"].upper(),
+                "position": {"x": 0.08, "y": 0.75},
+                "max_width_proportion": 0.84,
+                "font_size_base": 36,
+                "font_weight": "bold",
+                "colour": text_colour,
+                "alignment": "centre",
+                "line_height": 1.2,
+            })
+
+        return elements
 
     async def revise_plan(
         self, job: Job, qa_issues: list[str], current_plan: dict[str, Any]
