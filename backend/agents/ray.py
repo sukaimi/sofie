@@ -102,6 +102,13 @@ class RayAgent(BaseAgent):
                         pdf_images = await self._extract_and_identify_pdf_images(
                             job, result.local_path, on_status
                         )
+                        # If no embedded images found, render pages as images
+                        if not pdf_images:
+                            if on_status:
+                                await on_status("Rendering PDF pages as images")
+                            pdf_images = await self._render_pdf_pages_as_assets(
+                                job, result.local_path, on_status
+                            )
                         results.extend(pdf_images)
                 except OSError:
                     pass
@@ -213,6 +220,43 @@ class RayAgent(BaseAgent):
             # Vision identify
             if on_status:
                 await on_status(f"Identifying extracted image {i+1} from PDF")
+            await self._vision_identify(job, result)
+
+            extracted_results.append(result.model_dump())
+
+        return extracted_results
+
+    async def _render_pdf_pages_as_assets(
+        self, job: Job, pdf_path: str, on_status: Any = None
+    ) -> list[dict[str, Any]]:
+        """Render PDF pages as images and identify them via vision.
+
+        Fallback when no embedded raster images exist — the logo might
+        be vector art drawn directly in the PDF.
+        """
+        from backend.utils.pdf_brand_extractor import pdf_to_page_images
+
+        try:
+            page_images = pdf_to_page_images(pdf_path, max_pages=3, dpi=200)
+        except Exception:
+            return []
+
+        extracted_results = []
+        for i, img_bytes in enumerate(page_images):
+            temp_path = settings.temp_dir / f"pdf_page_{i}_{hash(pdf_path) % 10**8}.png"
+            temp_path.write_bytes(img_bytes)
+
+            result = AssetResult(
+                url=f"rendered_pdf_page_{i}",
+                identified_type="unknown",
+                local_path=str(temp_path),
+                format="png",
+                usable=True,
+                classification="OK",
+            )
+
+            if on_status:
+                await on_status(f"Identifying PDF page {i+1}")
             await self._vision_identify(job, result)
 
             extracted_results.append(result.model_dump())
