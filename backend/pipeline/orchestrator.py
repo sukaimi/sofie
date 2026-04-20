@@ -285,15 +285,9 @@ async def run_pipeline(
                     output_paths[size] = str(output_path)
                     break
                 elif attempt == settings.max_qa_attempts:
-                    # Escalate after max QA attempts
-                    qa_increment = await marcus.run(job, {"action": "increment_qa"})
-                    if qa_increment.get("escalated"):
-                        return PipelineResult(
-                            job_id=job.id,
-                            status="escalated",
-                            qa_results=qa_result,
-                            error="QA failed after maximum attempts",
-                        )
+                    # Show output anyway with QA suggestions
+                    output_paths[size] = str(output_path)
+                    await marcus.run(job, {"action": "increment_qa"})
                 else:
                     # Revise plan based on QA feedback
                     issues = []
@@ -307,10 +301,19 @@ async def run_pipeline(
                     plan = await celeste.revise_plan(job, issues, plan)
                     await marcus.run(job, {"action": "increment_qa"})
 
-        # Success — update job with output paths
+        # Update job with output paths
         job.output_paths = output_paths
         job.status = "review"
         await session.flush()
+
+        # If QA didn't fully pass, return with suggestions
+        if qa_result and not qa_result.get("overall_pass"):
+            return PipelineResult(
+                job_id=job.id,
+                status="review_with_suggestions",
+                output_paths=output_paths,
+                qa_results=qa_result,
+            )
 
         return PipelineResult(
             job_id=job.id,

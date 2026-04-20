@@ -373,7 +373,7 @@ async def _handle_pipeline_result(
         conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
         conv.state = "resumable"
 
-    elif result.status == "review":
+    elif result.status in ("review", "review_with_suggestions"):
         # Present output to user
         plan = job.composition_plan or {}
         resp = await sofie.execute(
@@ -399,13 +399,46 @@ async def _handle_pipeline_result(
             ),
         )
         conv.messages = conv.messages + [{"role": "sofie", "content": msg}]
+
+        # If QA had issues, show suggestions for improvement
+        if result.status == "review_with_suggestions" and result.qa_results:
+            suggestions = _extract_qa_suggestions(result.qa_results)
+            if suggestions:
+                suggestion_resp = await sofie.execute(
+                    job,
+                    {
+                        "action": "suggest_adjustments",
+                        "qa_issues": suggestions,
+                        "messages": conv.messages,
+                    },
+                )
+                suggestion_msg = suggestion_resp["message"]
+                await _send_sofie_message(
+                    conversation_id, suggestion_msg, job.id
+                )
+                conv.messages = conv.messages + [
+                    {"role": "sofie", "content": suggestion_msg}
+                ]
+
         conv.state = "awaiting_feedback"
 
-    elif result.status in ("escalated", "cost_ceiling_breached", "failed"):
+    elif result.status in ("cost_ceiling_breached", "failed"):
         resp = sofie._escalate({"reason": result.error or result.status})
         await _send_sofie_message(conversation_id, resp["message"], job.id)
         conv.messages = conv.messages + [{"role": "sofie", "content": resp["message"]}]
         conv.state = "resumable"
+
+
+def _extract_qa_suggestions(qa_results: dict) -> list[str]:
+    """Pull specific issues from Dana's QA results for Sofie to suggest fixes."""
+    issues = []
+    for check_key in ("check1_layout", "check2_brief", "check3_spec"):
+        check = qa_results.get(check_key, {})
+        if not check.get("pass"):
+            issues.extend(check.get("issues", []))
+    if qa_results.get("revision_notes"):
+        issues.append(qa_results["revision_notes"])
+    return issues
 
 
 async def _send_sofie_message(

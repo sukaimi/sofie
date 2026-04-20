@@ -83,6 +83,8 @@ class SofieAgent(BaseAgent):
             return self._report_font_issues(input_data)
         elif action == "present_output":
             return await self._present_output(job, input_data, conversation_history)
+        elif action == "suggest_adjustments":
+            return await self._suggest_adjustments(job, input_data, conversation_history)
         elif action == "evaluate_feedback":
             return await self._evaluate_feedback(job, input_data, conversation_history)
         elif action == "deliver":
@@ -229,6 +231,40 @@ class SofieAgent(BaseAgent):
             job=job,
             messages=messages,
             step="present_output",
+            max_tokens=512,
+        )
+
+        return {"message": response}
+
+    async def _suggest_adjustments(
+        self,
+        job: Job,
+        input_data: dict[str, Any],
+        history: list[dict],
+    ) -> dict[str, Any]:
+        """Suggest brief adjustments based on QA issues."""
+        qa_issues = input_data.get("qa_issues", [])
+        issues_text = "\n".join(f"- {issue}" for issue in qa_issues)
+
+        messages = history + [
+            {
+                "role": "user",
+                "content": (
+                    f"The QA check found these issues:\n{issues_text}\n\n"
+                    "Based on these, suggest 2-3 specific, actionable adjustments "
+                    "the client could make to their brief to get a better result. "
+                    "Be conversational and helpful — not technical. Frame it as "
+                    "'Here's what I'd suggest' not 'QA failed because'. "
+                    "End by asking if they'd like you to apply these adjustments "
+                    "and re-run."
+                ),
+            }
+        ]
+
+        response = await self._call_llm(
+            job=job,
+            messages=messages,
+            step="suggest_adjustments",
             max_tokens=512,
         )
 
