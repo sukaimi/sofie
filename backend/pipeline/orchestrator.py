@@ -254,8 +254,17 @@ async def run_pipeline(
             asset_paths["font"] = recs[0]["path"]
 
         if other_warnings and on_message:
-            warnings_text = "\n".join(f"- {w}" for w in other_warnings)
-            await on_message(f"A few other asset notes:\n{warnings_text}")
+            # Count how many are just unreadable links vs real issues
+            link_issues = sum(1 for w in other_warnings if "web page" in w or "Could not open" in w)
+            if link_issues == len(other_warnings):
+                await on_message(
+                    f"{link_issues} reference link{'s' if link_issues > 1 else ''} "
+                    f"couldn't be loaded (not provided as direct image links). "
+                    f"No worries — I'll work without them."
+                )
+            else:
+                warnings_text = "\n".join(f"- {w}" for w in other_warnings)
+                await on_message(f"A few asset notes:\n{warnings_text}")
 
         if not font_warning and not other_warnings and on_message:
             await on_message("All assets checked out. Moving on to art direction.")

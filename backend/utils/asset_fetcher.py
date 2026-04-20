@@ -114,9 +114,20 @@ async def fetch_asset(url: str, expected_type: str) -> AssetResult:
             _validate_font(local_path, result)
         elif result.format in ("png", "jpg", "jpeg", "svg"):
             _validate_image(local_path, expected_type, result)
+        elif result.format == "pdf":
+            # PDFs are handled by Ray's brand extraction — not a warning
+            pass
         else:
-            result.issues.append(f"Unexpected file format: {result.format}")
+            # Likely an HTML page from a sharing link that didn't resolve
+            if b"<!DOCTYPE" in resp.content[:200] or b"<html" in resp.content[:200]:
+                result.issues.append(
+                    "This link returned a web page, not an image. "
+                    "Please share a direct link to the file"
+                )
+            else:
+                result.issues.append("Could not open this file as an image — skipping")
             result.classification = "WARNING"
+            result.usable = False
 
     return result
 
