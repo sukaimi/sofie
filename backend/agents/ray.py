@@ -48,36 +48,46 @@ class RayAgent(BaseAgent):
         vision identification on image assets (LLM-bound). This order
         avoids wasting vision tokens on assets that can't be downloaded.
         """
+        import asyncio
+
         asset_links = input_data.get("asset_links", {})
         on_status = input_data.get("on_status")
-        results: list[dict[str, Any]] = []
         has_blockers = False
         missing_required: list[str] = []
 
-        # Pass 1: fetch and validate all links
+        # Build flat list of (url, asset_type) pairs
+        fetch_tasks: list[tuple[str, str]] = []
         for asset_type, urls in asset_links.items():
             if isinstance(urls, str):
                 urls = [urls]
-
             for url in urls:
-                if not url or not url.strip():
-                    continue
+                if url and url.strip():
+                    fetch_tasks.append((url.strip(), asset_type))
 
-                # Send live status with filename from URL
+        # Pass 1: fetch all assets in parallel
+        async def _fetch_one(url: str, asset_type: str) -> AssetResult:
+            if on_status:
+                filename = url.split("/")[-1].split("?")[0][:40] or asset_type
+                await on_status(f"Downloading {asset_type}: {filename}")
+            return await fetch_asset(url, asset_type)
+
+        fetched = await asyncio.gather(
+            *[_fetch_one(url, at) for url, at in fetch_tasks]
+        )
+
+        # Pass 2: vision identification (sequential — LLM-bound)
+        results: list[dict[str, Any]] = []
+        for result in fetched:
+            if result.usable and result.format in ("png", "jpg", "jpeg"):
                 if on_status:
-                    filename = url.strip().split("/")[-1].split("?")[0][:40] or asset_type
-                    await on_status(f"Downloading {asset_type}: {filename}")
+                    filename = (result.local_path or "").split("/")[-1] or "image"
+                    await on_status(f"Identifying asset: {filename}")
+                await self._vision_identify(job, result)
 
-                result = await fetch_asset(url.strip(), asset_type)
+            results.append(result.model_dump())
 
-                # Pass 2: vision identification for downloaded images
-                if result.usable and result.format in ("png", "jpg", "jpeg"):
-                    await self._vision_identify(job, result)
-
-                results.append(result.model_dump())
-
-                if result.classification == "BLOCKER":
-                    has_blockers = True
+            if result.classification == "BLOCKER":
+                has_blockers = True
 
         # Check for required assets that weren't provided at all
         # Font is optional — pipeline falls back to DejaVuSans

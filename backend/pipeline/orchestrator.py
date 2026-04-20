@@ -96,10 +96,45 @@ async def run_pipeline(
         brief = job.brief_json
         await marcus.run(job, {"action": "update_status", "new_status": "validating"})
 
-        # Step 2: Validate brief (Priya)
+        # Steps 2-4 run in PARALLEL: Priya + Ray + font check
         if on_status:
-            await on_status("Priya is reviewing your brief")
-        validation = await priya.run(job, {"brief_fields": brief})
+            await on_status("Running validation, asset fetch, and font check in parallel")
+
+        import asyncio
+
+        async def _validate_brief() -> dict[str, Any]:
+            if on_status:
+                await on_status("Priya is reviewing your brief")
+            return await priya.run(job, {"brief_fields": brief})
+
+        async def _check_fonts() -> list[str]:
+            font_path_str = brief.get("brand_font_link", "")
+            if on_status and font_path_str:
+                font_name = font_path_str.split("/")[-1].split("?")[0] or "brand font"
+                await on_status(f"Checking font: {font_name}")
+            texts_to_check = [
+                brief.get("headline_text", ""),
+                brief.get("sub_copy", ""),
+                brief.get("cta_text", ""),
+                brief.get("mandatory_inclusions", ""),
+            ]
+            texts_to_check = [t for t in texts_to_check if t]
+            if font_path_str and texts_to_check:
+                return check_font_coverage(Path(font_path_str), texts_to_check)
+            return []
+
+        async def _fetch_assets() -> dict[str, Any]:
+            asset_links = _extract_asset_links(brief)
+            total_assets = sum(len(v) if isinstance(v, list) else 1 for v in asset_links.values())
+            if on_status:
+                await on_status(f"Ray is fetching {total_assets} asset{'s' if total_assets != 1 else ''}")
+            return await ray.run(job, {"asset_links": asset_links, "on_status": on_status})
+
+        validation, font_issues, asset_result = await asyncio.gather(
+            _validate_brief(), _check_fonts(), _fetch_assets()
+        )
+
+        # Check results from parallel steps
         if validation.get("has_blockers"):
             return PipelineResult(
                 job_id=job.id,
@@ -108,36 +143,13 @@ async def run_pipeline(
                 warnings=validation.get("warnings", []),
             )
 
-        # Step 3: Font check
-        font_path_str = brief.get("brand_font_link", "")
-        if on_status and font_path_str:
-            font_name = font_path_str.split("/")[-1].split("?")[0] or "brand font"
-            await on_status(f"Checking font: {font_name}")
-        texts_to_check = [
-            brief.get("headline_text", ""),
-            brief.get("sub_copy", ""),
-            brief.get("cta_text", ""),
-            brief.get("mandatory_inclusions", ""),
-        ]
-        texts_to_check = [t for t in texts_to_check if t]
+        if font_issues:
+            return PipelineResult(
+                job_id=job.id,
+                status="font_issue",
+                font_issues=font_issues,
+            )
 
-        font_issues: list[str] = []
-        if font_path_str and texts_to_check:
-            font_issues = check_font_coverage(Path(font_path_str), texts_to_check)
-            if font_issues:
-                return PipelineResult(
-                    job_id=job.id,
-                    status="font_issue",
-                    font_issues=font_issues,
-                )
-
-        # Step 4: Fetch and validate assets (Ray)
-        asset_links = _extract_asset_links(brief)
-        # Count total assets for progress
-        total_assets = sum(len(v) if isinstance(v, list) else 1 for v in asset_links.values())
-        if on_status:
-            await on_status(f"Ray is fetching {total_assets} asset{'s' if total_assets != 1 else ''}")
-        asset_result = await ray.run(job, {"asset_links": asset_links, "on_status": on_status})
         if asset_result.get("has_blockers"):
             return PipelineResult(
                 job_id=job.id,
