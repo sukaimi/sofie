@@ -175,25 +175,43 @@ async def run_pipeline(
         # Build asset path lookup for compositor
         asset_paths = _build_asset_paths(asset_result.get("assets", []))
 
-        # Report any asset warnings to the user (especially font fallback)
-        if on_message:
-            asset_warnings = []
-            for asset in asset_result.get("assets", []):
-                if asset.get("classification") == "WARNING" and asset.get("issues"):
+        # Report any asset warnings — recommend font alternatives if needed
+        font_warning = False
+        other_warnings = []
+        for asset in asset_result.get("assets", []):
+            if asset.get("classification") == "WARNING" and asset.get("issues"):
+                if asset.get("identified_type") == "font":
+                    font_warning = True
+                else:
                     asset_type = asset.get("identified_type", "asset")
                     issues = "; ".join(asset["issues"])
-                    asset_warnings.append(f"**{asset_type}:** {issues}")
+                    other_warnings.append(f"**{asset_type}:** {issues}")
 
-            if asset_warnings:
-                warnings_text = "\n".join(f"- {w}" for w in asset_warnings)
-                await on_message(
-                    f"Heads up — a few asset notes:\n{warnings_text}\n\n"
-                    "I'll continue with fallbacks where needed."
-                )
-            else:
-                await on_message(
-                    "All assets checked out. Moving on to art direction."
-                )
+        if font_warning and on_message:
+            from backend.utils.font_recommender import recommend_font
+            brand = brief.get("brand_name", "")
+            font_hint = brief.get("brand_font_link", "").split("/")[-1].split("?")[0]
+            recs = recommend_font(brand, font_hint)
+            rec_lines = "\n".join(
+                f"  {i+1}. **{r['name']}** — {r['reason']}"
+                for i, r in enumerate(recs)
+            )
+            await on_message(
+                f"The font link in your brief didn't give me a usable font file "
+                f"(I got a PDF or HTML page instead of a .ttf/.otf). "
+                f"Here are some alternatives I have available:\n\n{rec_lines}\n\n"
+                f"I'll use **{recs[0]['name']}** for now. "
+                f"If you'd prefer a different one, just let me know."
+            )
+            # Auto-select best recommendation
+            asset_paths["font"] = recs[0]["path"]
+
+        if other_warnings and on_message:
+            warnings_text = "\n".join(f"- {w}" for w in other_warnings)
+            await on_message(f"A few other asset notes:\n{warnings_text}")
+
+        if not font_warning and not other_warnings and on_message:
+            await on_message("All assets checked out. Moving on to art direction.")
 
         # Determine primary size
         sizes = job.output_sizes or ["1080x1080"]

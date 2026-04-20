@@ -10,6 +10,11 @@ RUN apt-get update && apt-get install -y \
     gir1.2-pango-1.0 \
     pkg-config \
     libglib2.0-dev \
+    fonts-noto-core \
+    fonts-roboto \
+    fonts-open-sans \
+    fonts-lato \
+    fonts-montserrat \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
