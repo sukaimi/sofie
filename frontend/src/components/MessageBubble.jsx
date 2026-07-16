@@ -1,10 +1,10 @@
 /**
  * Single chat message bubble.
  *
- * Sofie messages align left with a subtle background.
- * User messages align right with the brand accent colour.
+ * Sofie messages align left on a dark surface with a red '// SOFIE' label.
+ * User messages align right in the brand red.
  * System/status messages are centered and muted.
- * Markdown-style links [text](url) are rendered as clickable.
+ * Markdown-style links [text](url) and **bold** are rendered inline.
  */
 export default function MessageBubble({ message }) {
   const { role, content, type } = message;
@@ -12,7 +12,7 @@ export default function MessageBubble({ message }) {
   if (type === "status") {
     return (
       <div className="flex justify-center my-2">
-        <span className="text-xs text-gray-400 bg-gray-50 px-3 py-1 rounded-full">
+        <span className="text-xs text-muted bg-surface border border-hairline px-3 py-1 rounded-full">
           {content}
         </span>
       </div>
@@ -22,16 +22,16 @@ export default function MessageBubble({ message }) {
   const isSofie = role === "sofie" || role === "system";
 
   return (
-    <div className={`flex ${isSofie ? "justify-start" : "justify-end"} mb-3`}>
+    <div className={`flex ${isSofie ? "justify-start" : "justify-end"} mb-3 animate-fade-up`}>
       <div
-        className={`max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
+        className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed ${
           isSofie
-            ? "bg-white text-gray-800 border border-gray-100 shadow-sm"
-            : "bg-indigo-600 text-white"
+            ? "bg-surface text-ink border border-hairline rounded-[4px_16px_16px_16px]"
+            : "bg-accent text-white rounded-[16px_4px_16px_16px] shadow-glow"
         }`}
       >
         {isSofie && (
-          <div className="text-xs font-medium text-indigo-600 mb-1">Sofie</div>
+          <div className="eyebrow mb-1.5">Sofie</div>
         )}
         <div className="whitespace-pre-wrap">
           <RenderContent content={content} isSofie={isSofie} />
@@ -61,7 +61,9 @@ function RenderContent({ content, isSofie }) {
           target={linkMatch[2].startsWith("/") ? "_self" : "_blank"}
           rel="noopener noreferrer"
           className={`underline font-medium ${
-            isSofie ? "text-indigo-600 hover:text-indigo-800" : "text-white/90 hover:text-white"
+            isSofie
+              ? "text-accent-bright hover:text-white"
+              : "text-white/90 hover:text-white"
           }`}
         >
           {linkMatch[1]}

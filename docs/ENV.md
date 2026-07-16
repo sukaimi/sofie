@@ -51,10 +51,13 @@ Claude Code must generate `.env.example` from this document.
 
 ---
 
-### 3. Google AI API Key (Nano Banana Pro)
+### 3. Google AI API Key (Nano Banana / Gemini image)
 **Variable:** `GOOGLE_AI_API_KEY`
-**Used by:** Image generation client (Nano Banana Pro fallback)
-**Purpose:** Alternative image generation for text-heavy compositions
+**Used by:** Image generation client — **primary** hero generator
+**Purpose:** Generate a base hero image via Gemini "Nano Banana" on the
+AI Studio **free tier** when no client hero and no Pexels match exist.
+Free tier has daily rate limits; on failure the pipeline falls back to
+Pollinations (keyless) automatically.
 
 **How to get:**
 1. Go to https://aistudio.google.com
@@ -63,8 +66,32 @@ Claude Code must generate `.env.example` from this document.
 4. Create new project or select existing
 5. Copy API key
 
+**How to get:** https://aistudio.google.com/apikey → "Create API key" (free).
 **Format:** `AIza...`
-**Required:** NO — only needed if Nano Banana Pro is preferred over Flux for certain jobs
+**Required:** Recommended — it's the default free generator (`IMAGE_GEN_PROVIDER=google`).
+Without it, generation falls straight through to Pollinations (also free, keyless).
+
+---
+
+### 4. Pexels API Key
+**Variable:** `PEXELS_API_KEY`
+**Used by:** Pexels stock photo client (hero image source)
+**Purpose:** Search real stock photography for the hero image before
+falling back to Flux generation. A real photo beats a render for brand
+quality and is free.
+
+**How to get:**
+1. Go to https://www.pexels.com/api/
+2. Sign in or create a Pexels account
+3. Click "Your API Key" — the key is issued instantly
+4. Copy the key
+
+**Format:** 56-char alphanumeric string
+**Required:** Only if `STOCK_IMAGE_PROVIDER=pexels`. Set
+`STOCK_IMAGE_PROVIDER=none` to disable Pexels entirely (no calls, straight
+to generation).
+**Rate limit:** Free tier — ~200 requests/hour, 20,000/month. SOFIE makes
+one search per job.
 
 ---
 
@@ -80,18 +107,37 @@ LLM_MODEL_HAIKU=claude-haiku-4-5-20251001
 
 ### Image Generation
 ```
-# Primary image gen provider: replicate | google | none
-IMAGE_GEN_PROVIDER=replicate
+# Provider chain — primary then fallback. Options: google | pollinations | replicate | none
+# Default: Gemini free tier, falling back to keyless Pollinations.
+IMAGE_GEN_PROVIDER=google
+IMAGE_GEN_FALLBACK=pollinations
 
-# Flux model on Replicate
+# Gemini "Nano Banana" model (AI Studio free tier).
+# gemini-2.5-flash-image is fast + free-tier friendly (1024px).
+# Swap for gemini-3.1-flash-image / gemini-3-pro-image if your tier allows.
+NANO_BANANA_MODEL=gemini-2.5-flash-image
+# Optional output size for Gemini 3.x models: 1K | 2K | 4K (blank = model default)
+GEMINI_IMAGE_SIZE=
+
+# Flux model on Replicate (paid — only used if selected in the chain)
 FLUX_MODEL=black-forest-labs/flux-dev
-
-# Nano Banana Pro model identifier
-NANO_BANANA_MODEL=gemini-3-pro-image-preview
 
 # Set to true to disable image generation entirely
 # (jobs without hero images will fail gracefully)
 IMAGE_GEN_DISABLED=false
+```
+
+### Stock Photos (Pexels)
+```
+# Stock image provider: pexels | none
+# 'none' fully disables Pexels (no calls, straight to generation)
+STOCK_IMAGE_PROVIDER=pexels
+
+# Candidates to fetch per search
+PEXELS_PER_PAGE=15
+
+# Reject any photo below this width (platform minimum)
+PEXELS_MIN_WIDTH=1080
 ```
 
 ### Pipeline
@@ -208,6 +254,12 @@ REPLICATE_API_KEY=
 # Required only if IMAGE_GEN_PROVIDER=google
 GOOGLE_AI_API_KEY=
 
+# Pexels API key (stock photo search)
+# Get from: https://www.pexels.com/api/  → "Your API Key"
+# Format: 56-char alphanumeric string
+# Required only if STOCK_IMAGE_PROVIDER=pexels
+PEXELS_API_KEY=
+
 # ─── LLM Models ───────────────────────────
 
 LLM_MODEL_OPUS=claude-opus-4-6
@@ -216,13 +268,22 @@ LLM_MODEL_HAIKU=claude-haiku-4-5-20251001
 
 # ─── Image Generation ─────────────────────
 
-# Primary image gen provider
-# Options: replicate | google | none
-IMAGE_GEN_PROVIDER=replicate
+# Provider chain — primary then fallback
+# Options: google | pollinations | replicate | none
+IMAGE_GEN_PROVIDER=google
+IMAGE_GEN_FALLBACK=pollinations
 
+NANO_BANANA_MODEL=gemini-2.5-flash-image
+GEMINI_IMAGE_SIZE=
 FLUX_MODEL=black-forest-labs/flux-dev
-NANO_BANANA_MODEL=gemini-3-pro-image-preview
 IMAGE_GEN_DISABLED=false
+
+# ─── Stock Photos (Pexels) ────────────────
+
+# Stock image provider: pexels | none
+STOCK_IMAGE_PROVIDER=pexels
+PEXELS_PER_PAGE=15
+PEXELS_MIN_WIDTH=1080
 
 # ─── Pipeline Limits ──────────────────────
 
@@ -294,8 +355,9 @@ dist/
 Before deploying to Hostinger KVM 2:
 
 - [ ] `ANTHROPIC_API_KEY` — copied from Anthropic console
-- [ ] `REPLICATE_API_KEY` — copied from Replicate (if image gen needed)
-- [ ] `GOOGLE_AI_API_KEY` — copied from Google AI Studio (if Nano Banana needed)
+- [ ] `GOOGLE_AI_API_KEY` — copied from AI Studio (free-tier generator; optional — Pollinations fallback is keyless)
+- [ ] `REPLICATE_API_KEY` — copied from Replicate (only if using paid Flux in the chain)
+- [ ] `PEXELS_API_KEY` — copied from Pexels (if `STOCK_IMAGE_PROVIDER=pexels`)
 - [ ] `FILE_SERVER_BASE_URL` — updated to production domain/IP
 - [ ] `FRONTEND_URL` — updated to production domain/IP
 - [ ] `DEBUG` — set to `false`
@@ -313,8 +375,11 @@ Before deploying to Hostinger KVM 2:
 | Anthropic | claude-opus-4-6 | $15.00/MTok | $75.00/MTok |
 | Anthropic | claude-sonnet-4-6 | $3.00/MTok | $15.00/MTok |
 | Anthropic | claude-haiku-4-5 | $0.80/MTok | $4.00/MTok |
-| Replicate | flux-dev | $0.030/image | — |
-| Google AI | nano-banana-pro | $0.134/image (2K) | — |
+| Google AI | gemini-2.5-flash-image | **free tier** (daily limits) | — |
+| Pollinations | (default) | **free**, no key | — |
+| Pexels | stock search | free (~200 req/hr, 20k/mo) | — |
+| Replicate | flux-dev | $0.030/image (paid, optional) | — |
+| Google AI | gemini-3-pro-image | paid (higher tier) | — |
 
 MTok = million tokens
 

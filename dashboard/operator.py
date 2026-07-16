@@ -91,6 +91,16 @@ else:
                         img_url = f"{API_BASE}/job/{job_id}/download/{filename}"
                         st.image(img_url, caption=size, use_container_width=True)
 
+                # Stock photo attribution (Pexels) — credit the photographer
+                attribution = job.get("stock_attribution")
+                if attribution:
+                    photographer = attribution.get("photographer", "Unknown")
+                    url = attribution.get("photographer_url", "")
+                    credit = f"Photo by {photographer} on Pexels"
+                    if url:
+                        credit = f"[{credit}]({url})"
+                    st.caption(f"Hero source: {credit}")
+
             with col2:
                 # QA scores
                 qa = job.get("qa_results", {})

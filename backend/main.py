@@ -13,10 +13,10 @@ from typing import AsyncGenerator
 from fastapi import Depends, FastAPI, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.config import settings
+from backend.db import apply_sqlite_pragmas
 from backend.models import Base, Job
 from backend.schemas import HealthResponse, JobStatusResponse
 
@@ -25,6 +25,7 @@ engine = create_async_engine(
     echo=settings.debug,
     connect_args={"timeout": 30, "check_same_thread": False},
 )
+apply_sqlite_pragmas(engine)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -48,9 +49,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Enable WAL mode for concurrent read/write access
-        await conn.execute(text("PRAGMA journal_mode=WAL"))
-        await conn.execute(text("PRAGMA busy_timeout=5000"))
+        # WAL + busy_timeout are applied per-connection via apply_sqlite_pragmas
+        # (a PRAGMA journal_mode inside this transaction would be ignored).
 
     yield
 
@@ -196,6 +196,7 @@ async def list_operator_jobs(
                 "total_cost_usd": j.total_cost_usd,
                 "qa_results": j.qa_results,
                 "output_paths": j.output_paths,
+                "stock_attribution": (j.asset_manifest or {}).get("stock_attribution"),
                 "created_at": j.created_at.isoformat() if j.created_at else "",
             }
             for j in jobs

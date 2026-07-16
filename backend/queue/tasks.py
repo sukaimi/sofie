@@ -32,10 +32,15 @@ async def _run_async(job_id: str, docx_path: str | None) -> dict:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
     from backend.config import settings
+    from backend.db import apply_sqlite_pragmas
     from backend.models import Job
     from backend.pipeline.orchestrator import run_pipeline
 
-    engine = create_async_engine(settings.database_url)
+    engine = create_async_engine(
+        settings.database_url,
+        connect_args={"timeout": 30, "check_same_thread": False},
+    )
+    apply_sqlite_pragmas(engine)
     async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with async_session() as session:

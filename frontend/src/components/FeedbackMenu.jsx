@@ -15,32 +15,23 @@ const FEEDBACK_OPTIONS = [
 
 export default function FeedbackMenu({ onSelect }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 my-3">
-      <p className="text-sm text-gray-600 mb-3">
-        What would you like to change?
-      </p>
+    <div className="bg-surface border border-hairline rounded-2xl p-4 my-3 animate-fade-up">
+      <p className="eyebrow mb-3">What would you like to change?</p>
       <div className="flex flex-col gap-2">
-        {FEEDBACK_OPTIONS.map(({ key, label, desc }) => (
-          <button
-            key={key}
-            onClick={() => onSelect(key, label)}
-            className="text-left px-3 py-2 rounded-lg border border-gray-100
-                       hover:border-indigo-200 hover:bg-indigo-50
-                       transition-colors text-sm"
-          >
-            <span className="font-medium text-gray-800">{label}</span>
-            <span className="text-gray-400 ml-2">— {desc}</span>
-          </button>
-        ))}
-        <button
-          onClick={() => onSelect("other", "Something else")}
-          className="text-left px-3 py-2 rounded-lg border border-gray-100
-                     hover:border-indigo-200 hover:bg-indigo-50
-                     transition-colors text-sm"
-        >
-          <span className="font-medium text-gray-800">Something else</span>
-          <span className="text-gray-400 ml-2">— describe it</span>
-        </button>
+        {[...FEEDBACK_OPTIONS, { key: "other", label: "Something else", desc: "describe it" }].map(
+          ({ key, label, desc }) => (
+            <button
+              key={key}
+              onClick={() => onSelect(key, label)}
+              className="text-left px-3 py-2.5 rounded-lg border border-hairline bg-surface-2
+                         hover:border-accent-bright/60 hover:bg-accent/10 transition text-sm
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-bright"
+            >
+              <span className="font-medium text-ink">{label}</span>
+              <span className="text-muted-dim ml-2">— {desc}</span>
+            </button>
+          )
+        )}
       </div>
     </div>
   );

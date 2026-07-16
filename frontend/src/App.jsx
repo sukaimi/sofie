@@ -17,25 +17,33 @@ export default function App() {
   const { messages, status, pipelineStatus, sendMessage } =
     useWebSocket(conversationId);
 
+  const online = status === "connected";
+
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col bg-ground text-ink">
       {/* Header */}
-      <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center gap-3">
-        <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-          <span className="text-white text-sm font-bold">S</span>
+      <header className="border-b border-hairline px-5 sm:px-6 py-3.5 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-[10px] bg-accent shadow-glow-sm flex items-center justify-center">
+          <span className="font-display font-black text-white text-lg leading-none -translate-y-px">
+            S
+          </span>
         </div>
-        <div>
-          <h1 className="text-sm font-semibold text-gray-900">SOFIE</h1>
-          <p className="text-xs text-gray-400">Studio Orchestrator</p>
+        <div className="leading-tight">
+          <h1 className="font-display font-extrabold tracking-wide text-[15px] text-ink">
+            SOFIE
+          </h1>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-dim">
+            Studio Orchestrator
+          </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <span
             className={`w-2 h-2 rounded-full ${
-              status === "connected" ? "bg-green-400" : "bg-amber-400"
+              online ? "bg-good shadow-[0_0_8px_#46B26B]" : "bg-warn"
             }`}
           />
-          <span className="text-xs text-gray-400">
-            {status === "connected" ? "Online" : "Connecting"}
+          <span className="text-xs text-muted">
+            {online ? "Online" : "Connecting"}
           </span>
         </div>
       </header>

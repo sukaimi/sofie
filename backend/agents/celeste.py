@@ -12,6 +12,27 @@ from backend.agents.base import BaseAgent
 from backend.models import Job
 
 
+def _orientation_from_dimensions(dimensions: str) -> str:
+    """Map a 'WIDTHxHEIGHT' canvas string to a Pexels orientation.
+
+    Landscape when wider than tall, portrait when taller than wide,
+    square within a 5% tolerance. Defaults to square on parse failure.
+    """
+    try:
+        w_str, h_str = dimensions.lower().split("x")
+        w, h = int(w_str), int(h_str)
+    except (ValueError, AttributeError):
+        return "square"
+    if h == 0:
+        return "square"
+    ratio = w / h
+    if ratio > 1.05:
+        return "landscape"
+    if ratio < 0.95:
+        return "portrait"
+    return "square"
+
+
 class CelesteAgent(BaseAgent):
     """Art director — translates briefs and references into composition plans.
 
@@ -46,6 +67,8 @@ class CelesteAgent(BaseAgent):
         '  "logo": {"position": {"x":0,"y":0}, "size_proportion": 0.15, '
         '"anchor": "bottom-right"},\n'
         '  "design_elements": [],\n'
+        '  "stock_query": "2-5 word photo search, e.g. latte pour cafe morning",\n'
+        '  "orientation": "landscape|portrait|square",\n'
         '  "text_elements": [\n'
         "    {\n"
         '      "role": "headline|subcopy|cta|mandatory",\n'
@@ -75,7 +98,11 @@ class CelesteAgent(BaseAgent):
         "sub-copy below it (y: 0.5-0.65), CTA below that (y: 0.65-0.8).\n"
         "6. NEVER invent text content. Use ONLY the exact text from the brief "
         "for headline, sub-copy, and CTA. Do not write taglines, questions, "
-        "or slogans that aren't in the brief."
+        "or slogans that aren't in the brief.\n"
+        "7. When no hero image is provided, emit a 'stock_query' (2-5 concrete "
+        "nouns describing the ideal hero PHOTOGRAPH, drawn from the brief's "
+        "product/subject — never text, logos, or slogans) so a real stock photo "
+        "can be sourced. Set 'orientation' to match the canvas shape."
     )
 
     async def execute(
@@ -131,6 +158,15 @@ class CelesteAgent(BaseAgent):
             plan["text_elements"] = self._sanitise_text_elements(
                 plan["text_elements"], brief
             )
+
+        # Orientation is derived from the canvas, not trusted to the LLM —
+        # it feeds the Pexels stock search when no hero image is provided.
+        plan["orientation"] = _orientation_from_dimensions(dimensions)
+
+        # Guarantee a stock query so the orchestrator can attempt Pexels even
+        # if Celeste omitted one. Fall back to brand/product context from the brief.
+        if not (plan.get("stock_query") or "").strip():
+            plan["stock_query"] = self._fallback_stock_query(brief)
 
         # Ensure canvas colour uses brand colours if available
         if plan.get("canvas_colour", "#FFFFFF") == "#FFFFFF" and brief.get("brand_colours"):
@@ -229,6 +265,20 @@ class CelesteAgent(BaseAgent):
 
         # Remove empty elements
         return [e for e in elements if e.get("content")]
+
+    def _fallback_stock_query(self, brief: dict) -> str:
+        """Build a stock photo search query from brief context.
+
+        Used when Celeste omits a stock_query. Prefers concrete subject
+        matter (product, key message) over brand name so Pexels returns a
+        relevant photograph rather than a logo-like result.
+        """
+        for field in ("product_name", "product", "key_message", "campaign_objective"):
+            value = brief.get(field)
+            if value and str(value).strip():
+                return " ".join(str(value).split()[:5])
+        brand = str(brief.get("brand_name", "")).strip()
+        return f"{brand} lifestyle".strip() or "modern lifestyle"
 
     async def revise_plan(
         self, job: Job, qa_issues: list[str], current_plan: dict[str, Any]

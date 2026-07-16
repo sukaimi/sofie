@@ -5,6 +5,7 @@ check → Ray → Celeste → QA loop (Kai → Dana, max 3) → present to user.
 Failed jobs are resumable from the last successful step.
 """
 
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -16,12 +17,14 @@ from backend.agents.marcus import MarcusAgent
 from backend.agents.priya import PriyaAgent
 from backend.agents.ray import RayAgent
 from backend.config import settings
-from backend.models import Job
+from backend.models import AgentLog, Job
 from backend.pipeline.brief_parser import parse_brief
+from backend.utils.asset_fetcher import fetch_asset
 from backend.utils.compositor import composite
 from backend.utils.file_server import get_output_path
 from backend.utils.image_gen_client import generate_image
 from backend.utils.llm_client import CostCeilingBreached
+from backend.utils.pexels_client import search_photos
 from backend.utils.text_renderer import check_font_coverage, render_text_layer
 
 
@@ -294,20 +297,34 @@ async def run_pipeline(
             },
         )
 
-        # Generate hero image if none provided
+        # Source a hero image if none provided. Priority: Pexels stock photo
+        # (real photo, brand-quality, free) → Flux generation (last resort).
         if not asset_paths.get("hero"):
-            if on_message:
-                await on_message(
-                    "No hero image in your brief, so I'm generating one. "
-                    "This takes a little longer — hang tight."
-                )
-            if on_status:
-                await on_status("Generating hero image with Flux")
             w, h = _parse_dimensions(primary_size)
-            hero_prompt = _build_hero_prompt(brief, plan)
-            hero_path = await generate_image(hero_prompt, (w, h), job.id)
-            if hero_path:
-                asset_paths["hero"] = str(hero_path)
+
+            stock_enabled = (
+                settings.stock_image_provider == "pexels"
+                and bool(settings.pexels_api_key)
+            )
+            if stock_enabled:
+                stock_path = await _try_stock_hero(
+                    job, session, plan, on_status, on_message
+                )
+                if stock_path:
+                    asset_paths["hero"] = str(stock_path)
+
+            if not asset_paths.get("hero"):
+                if on_message and not stock_enabled:
+                    await on_message(
+                        "No hero image in your brief, so I'm generating one. "
+                        "This takes a little longer — hang tight."
+                    )
+                if on_status:
+                    await on_status("Generating a hero image")
+                hero_prompt = _build_hero_prompt(brief, plan)
+                hero_path = await generate_image(hero_prompt, (w, h), job.id)
+                if hero_path:
+                    asset_paths["hero"] = str(hero_path)
 
         # QA loop (max 3 attempts per CLAUDE.md)
         output_paths: dict[str, str] = {}
@@ -497,6 +514,95 @@ def _resolve_font_path(
         return Path(brief_font)
 
     return Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf")
+
+
+async def _try_stock_hero(
+    job: Job,
+    session: AsyncSession,
+    plan: dict[str, Any],
+    on_status: Callable[[str], Any] | None,
+    on_message: Callable[[str], Any] | None,
+) -> Path | None:
+    """Attempt to source a hero photo from Pexels before Flux generation.
+
+    Searches Pexels with Celeste's stock_query, downloads each candidate
+    through Ray's asset validation (fetch_asset with the 'hero' quality
+    gate), and returns the first that passes. On any miss — no results,
+    auth/rate-limit failure, or nothing usable — logs the reason and
+    returns None so the caller falls back to generation. A stock miss
+    NEVER fails the job.
+    """
+    query = (plan.get("stock_query") or "").strip()
+    orientation = plan.get("orientation", "square")
+    start_ms = time.monotonic()
+
+    def _log(note: str) -> None:
+        session.add(
+            AgentLog(
+                job_id=job.id,
+                agent_name="ray",
+                step="stock_search",
+                status="completed",
+                duration_ms=int((time.monotonic() - start_ms) * 1000),
+                notes=note[:2000],
+            )
+        )
+
+    async def _miss(reason: str) -> None:
+        """Log the miss and tell the user we'll generate instead."""
+        _log(reason)
+        await session.flush()
+        if on_message:
+            await on_message("No stock match — generating one instead.")
+
+    if not query:
+        await _miss("stock miss: no query")
+        return None
+
+    if on_status:
+        await on_status("Finding a photo")
+
+    photos = await search_photos(
+        query=query,
+        orientation=orientation,
+        per_page=settings.pexels_per_page,
+        min_width=settings.pexels_min_width,
+    )
+    if not photos:
+        await _miss(f"stock miss: no results for '{query}' ({orientation})")
+        return None
+
+    # Try candidates in resolution order; first to pass Ray's hero check wins.
+    for photo in photos:
+        download_url = photo.src_original or photo.src_large2x
+        if not download_url:
+            continue
+        result = await fetch_asset(download_url, "hero")
+        if result.usable and result.local_path:
+            # Store attribution on the job record (surfaced in the operator
+            # dashboard + agent log). Reassign the JSON column so SQLAlchemy
+            # tracks the mutation.
+            job.asset_manifest = {
+                **(job.asset_manifest or {}),
+                "stock_attribution": {
+                    "source": "pexels",
+                    "photo_id": photo.id,
+                    "photographer": photo.photographer,
+                    "photographer_url": photo.photographer_url,
+                    "query": query,
+                },
+            }
+            _log(
+                f"stock hit: '{query}' → photo {photo.id} "
+                f"by {photo.photographer} ({photo.width}x{photo.height})"
+            )
+            await session.flush()
+            if on_message and photo.photographer:
+                await on_message(f"Found a photo by {photo.photographer}.")
+            return Path(result.local_path)
+
+    await _miss(f"stock miss: {len(photos)} candidates failed quality check")
+    return None
 
 
 def _build_hero_prompt(brief: dict[str, Any], plan: dict[str, Any]) -> str:

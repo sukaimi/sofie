@@ -28,10 +28,23 @@ class Settings(BaseSettings):
     llm_model_haiku: str = "claude-haiku-4-5-20251001"
 
     # ── Image Generation ──────────────────────────────────────
-    image_gen_provider: str = "replicate"
+    # Primary provider, then fallback: google | pollinations | replicate | none
+    image_gen_provider: str = "google"
+    image_gen_fallback: str = "pollinations"
     flux_model: str = "black-forest-labs/flux-dev"
-    nano_banana_model: str = "gemini-3-pro-image-preview"
+    # Gemini "Nano Banana" model (AI Studio free tier). gemini-2.5-flash-image
+    # is the fast, free-tier-friendly default; swap for gemini-3.1-flash-image
+    # etc. via env if your tier allows.
+    nano_banana_model: str = "gemini-2.5-flash-image"
+    gemini_image_size: str = ""  # optional: 1K | 2K | 4K (blank = model default)
     image_gen_disabled: bool = False
+
+    # ── Stock Photos (Pexels) ─────────────────────────────────
+    pexels_api_key: str = ""
+    # stock | none — controls whether Pexels is queried before generation falls back
+    stock_image_provider: str = "pexels"
+    pexels_per_page: int = 15  # candidates to fetch per search
+    pexels_min_width: int = 1080  # reject anything below platform minimum
 
     # ── Pipeline Limits ───────────────────────────────────────
     cost_ceiling_usd: float = 2.00
