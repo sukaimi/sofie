@@ -6,10 +6,41 @@ image, design elements, and logo placement. Text is handled
 separately by text_renderer.py via Cairo.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter
+
+log = logging.getLogger("sofie.compositor")
+
+
+def _open_rgba(path: Path) -> Image.Image:
+    """Open an image as RGBA, rasterising SVG assets first.
+
+    Pillow cannot read SVG, but brand logos are frequently supplied as
+    vector. We detect SVG by extension or content and rasterise it to a
+    transparent PNG via cairosvg before handing it to Pillow.
+    """
+    path = Path(path)
+    is_svg = path.suffix.lower() == ".svg"
+    if not is_svg:
+        try:
+            with open(path, "rb") as f:
+                head = f.read(400)
+            is_svg = b"<svg" in head or (b"<?xml" in head and b"svg" in head)
+        except OSError:
+            is_svg = False
+
+    if is_svg:
+        import io
+
+        import cairosvg
+
+        png_bytes = cairosvg.svg2png(url=str(path), output_width=1024)
+        return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+    return Image.open(path).convert("RGBA")
 
 
 def composite(
@@ -51,11 +82,14 @@ def composite(
         if elem_path and Path(elem_path).exists():
             canvas = _place_element(canvas, Path(elem_path), elem_plan, width, height)
 
-    # Layer 6: logo
+    # Layer 6: logo — never let a bad logo file kill the whole deliverable
     logo_plan = plan.get("logo", {})
     logo_path = assets.get("logo")
     if logo_path and Path(logo_path).exists():
-        canvas = _place_logo(canvas, Path(logo_path), logo_plan, width, height)
+        try:
+            canvas = _place_logo(canvas, Path(logo_path), logo_plan, width, height)
+        except Exception as exc:
+            log.warning(f"Skipping logo (could not composite {logo_path}): {exc}")
 
     # Save output
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +139,7 @@ def _apply_pattern(
     Patterns are tiled rather than stretched so they maintain their
     intended visual density regardless of canvas size.
     """
-    pattern = Image.open(pattern_path).convert("RGBA")
+    pattern = _open_rgba(pattern_path)
     for y in range(0, height, pattern.height):
         for x in range(0, width, pattern.width):
             canvas.paste(pattern, (x, y), pattern)
@@ -125,7 +159,7 @@ def _place_hero(
     aspect ratios don't match — 'centre' keeps the middle,
     'top' preserves the top edge, etc.
     """
-    hero = Image.open(hero_path).convert("RGBA")
+    hero = _open_rgba(hero_path)
     pos = plan.get("position", {})
 
     target_w = int(pos.get("width", 1.0) * width)
@@ -157,7 +191,7 @@ def _place_element(
     Elements are sized as a proportion of canvas width and positioned
     at the specified coordinates.
     """
-    elem = Image.open(elem_path).convert("RGBA")
+    elem = _open_rgba(elem_path)
     pos = plan.get("position", {})
     size_prop = plan.get("size_proportion", 0.3)
 
@@ -189,7 +223,7 @@ def _place_logo(
     Logo is sized as a proportion of canvas width. Anchor determines
     which corner or edge the position coordinates refer to.
     """
-    logo = Image.open(logo_path).convert("RGBA")
+    logo = _open_rgba(logo_path)
     size_prop = plan.get("size_proportion", 0.15)
     pos = plan.get("position", {})
     anchor = plan.get("anchor", "bottom-right")
