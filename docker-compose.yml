@@ -10,7 +10,8 @@ services:
     build: .
     env_file: .env
     ports:
-      - "8000:8000"
+      # Host 8002 (not 8000 — Mata owns 8000 on the co-hosted KVM2 box); nginx proxies here.
+      - "8002:8000"
     volumes:
       - ./brands:/app/brands:ro
       - ./briefs:/app/briefs:ro
