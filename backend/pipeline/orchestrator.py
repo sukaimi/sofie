@@ -143,9 +143,15 @@ async def run_pipeline(
                 await on_status(f"Ray is fetching {total_assets} asset{'s' if total_assets != 1 else ''}")
             return await ray.run(job, {"asset_links": asset_links, "on_status": on_status})
 
-        validation, font_issues, asset_result = await asyncio.gather(
-            _validate_brief(), _check_fonts(), _fetch_assets()
-        )
+        # Run sequentially, NOT via asyncio.gather. Priya and Ray both write
+        # AgentLog rows through the one shared AsyncSession, and an AsyncSession
+        # is not safe for concurrent use — overlapping add()/flush() calls
+        # corrupt the session mid-flush (SAWarning) and abort the pipeline,
+        # leaving the job stuck in "validating". The parallelism only saved a
+        # few seconds; correctness matters more here.
+        validation = await _validate_brief()
+        font_issues = await _check_fonts()
+        asset_result = await _fetch_assets()
 
         # Check results from parallel steps
         if validation.get("has_blockers"):
