@@ -9,6 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -168,7 +169,25 @@ async def download_file(job_id: str, filename: str) -> FileResponse | JSONRespon
     if not file_path.exists():
         return JSONResponse(status_code=404, content={"error": "File not found"})
 
-    return FileResponse(path=file_path, filename=filename)
+    # Set the download headers explicitly.  Besides making the contract clear
+    # to reverse proxies, filename* preserves non-ASCII names while filename
+    # supplies the broadly-supported ASCII form used by our composited files.
+    disposition = (
+        f'attachment; filename="{filename}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    media_type = (
+        "image/jpeg"
+        if file_path.suffix.lower() in {".jpg", ".jpeg"}
+        else "image/png"
+        if file_path.suffix.lower() == ".png"
+        else "application/octet-stream"
+    )
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        headers={"Content-Disposition": disposition},
+    )
 
 
 # ── Operator endpoints ────────────────────────────────────────────────

@@ -11,7 +11,8 @@
  * Fetches the file as a blob and triggers a same-document download. The
  * object URL is revoked on a delay — revoking it immediately (before the
  * browser has finished reading the blob) makes some browsers save a
- * UUID-named or nameless file. Falls back to a direct navigation.
+ * UUID-named or nameless file. Falls back to same-tab navigation because a
+ * window.open() after an awaited fetch is commonly blocked as a popup.
  */
 async function downloadFile(url, name) {
   try {
@@ -30,7 +31,10 @@ async function downloadFile(url, name) {
       URL.revokeObjectURL(objectUrl);
     }, 4000);
   } catch {
-    window.open(url, "_blank", "noopener");
+    // This is a real navigation, not a popup, so it remains allowed after the
+    // asynchronous fetch has lost the original user-activation token. The
+    // server's Content-Disposition header turns the navigation into a download.
+    window.location.assign(url);
   }
 }
 
@@ -44,7 +48,7 @@ export default function ImagePreview({ paths, jobId }) {
         const downloadName = /\.[a-z0-9]+$/i.test(filename)
           ? filename
           : `${filename}.jpg`;
-        const downloadUrl = `/api/job/${jobId}/download/${filename}`;
+        const downloadUrl = `/api/job/${encodeURIComponent(jobId)}/download/${encodeURIComponent(filename)}`;
 
         return (
           <figure
