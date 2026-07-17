@@ -92,7 +92,13 @@ async def handle_websocket(
         conv.messages.append(
             {"role": "sofie", "content": greeting["message"]}
         )
-        await session.flush()
+        # Commit the greeting straight away. A bare flush leaves the write
+        # transaction open while the handler then idles on receive_text(),
+        # so an idle connection (e.g. a browser sitting on the welcome
+        # screen) holds the SQLite write lock indefinitely and deadlocks
+        # every other connection for the full busy_timeout. Committing
+        # releases the lock before we start waiting for the first message.
+        await session.commit()
 
     try:
         while True:
