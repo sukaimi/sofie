@@ -50,3 +50,6 @@ htmlcov/
 
 # Local Claude settings (contains machine-specific allow rules)
 .claude/settings.local.json
+
+# Local build archives (large zips, not for VCS)
+archived/
